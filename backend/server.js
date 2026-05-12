@@ -171,6 +171,8 @@ app.post('/api/join', async (req, res) => {
 wssIn.on('connection', (ws) => {
   console.log("Meeting BaaS connected to /audio-in (streaming.input) — Ready to speak");
   activeInputWs = ws;
+  // If we had buffered model audio while no /audio-in was connected, flush it now.
+  try { flushPendingModelAudioToMeeting(ws); } catch (e) {}
   ws.on('close', () => {
     if (activeInputWs === ws) activeInputWs = null;
     console.log("/audio-in closed");
@@ -179,6 +181,29 @@ wssIn.on('connection', (ws) => {
     // just dummy wait
   });
 });
+
+// If Gemini produced audio before a /audio-in client connected, stash it here
+let pendingModelAudioToMeeting = [];
+let pendingModelAudioBytes = 0;
+const MAX_PENDING_MEETING_BYTES = 16000 * 2 * 5; // keep up to ~5s of audio
+
+// Flush any pending model audio when a new /audio-in connects
+// (attach to the same connection handler to avoid duplicating event logic)
+// Note: we flush here rather than replaying old model prompts to avoid feedback loops.
+// We simply forward any short buffered audio that arrived while no input ws was present.
+const flushPendingModelAudioToMeeting = (ws) => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (pendingModelAudioBytes === 0) return;
+  try {
+    const buf = Buffer.concat(pendingModelAudioToMeeting);
+    ws.send(buf);
+    console.log('Flushed buffered Gemini audio to /audio-in bytes=', buf.length);
+  } catch (e) {
+    console.error('Error flushing buffered Gemini audio to /audio-in:', e);
+  }
+  pendingModelAudioToMeeting = [];
+  pendingModelAudioBytes = 0;
+};
 
 wssOut.on('connection', (ws) => {
   console.log("Meeting BaaS connected to /audio-out (streaming.output)");
@@ -208,6 +233,50 @@ wssOut.on('connection', (ws) => {
   let lastModelText = null;
   let lastModelTextAt = 0;
   const MODEL_TEXT_DEDUPE_MS = 20000; // suppress identical model text for 20s
+
+  // Queue outbound MeetingBaaS audio destined for Gemini when rate-limited.
+  let pendingToGeminiBuffers = [];
+  let pendingToGeminiBytes = 0;
+  let pendingToGeminiTimer = null;
+  const MAX_PENDING_GEMINI_BYTES = 16000 * 2 * 10; // up to ~10s queued
+
+  const flushPendingToGemini = () => {
+    pendingToGeminiTimer = null;
+    if (!pendingToGeminiBuffers || pendingToGeminiBuffers.length === 0) return;
+    const buf = Buffer.concat(pendingToGeminiBuffers);
+    pendingToGeminiBuffers = [];
+    pendingToGeminiBytes = 0;
+    lastSentToGeminiAt = Date.now();
+    ensureGeminiConnected();
+    geminiSessionPromise
+      .then((session) => {
+        try {
+          const base64 = buf.toString('base64');
+          const maybe = session.sendRealtimeInput({ audio: { data: base64, mimeType: 'audio/pcm;rate=16000' } });
+          if (maybe && typeof maybe.then === 'function') {
+            maybe
+              .then(() => console.log('sendRealtimeInput (flushed) ok'))
+              .catch((err) => {
+                console.error('sendRealtimeInput (flushed) error:', err);
+                geminiSession = null;
+                geminiSessionPromise = null;
+                hasSentKickoff = false;
+              });
+          }
+        } catch (err) {
+          console.error('sendRealtimeInput (flushed) error (sync):', err);
+          geminiSession = null;
+          geminiSessionPromise = null;
+          hasSentKickoff = false;
+        }
+      })
+      .catch((err) => {
+        console.error('geminiSessionPromise then error (flush):', err);
+        geminiSession = null;
+        geminiSessionPromise = null;
+        hasSentKickoff = false;
+      });
+  };
 
   function ensureGeminiConnected() {
     if (geminiSessionPromise) return geminiSessionPromise;
@@ -283,7 +352,21 @@ wssOut.on('connection', (ws) => {
                   console.error('Error forwarding Gemini audio to /audio-in:', e);
                 }
               } else {
-                console.log('No active /audio-in connection to forward Gemini audio');
+                // Buffer model audio when there is no /audio-in connected so we can
+                // forward it once a client connects. Cap buffer size to avoid OOM.
+                if (pendingModelAudioBytes + outBuf.length > MAX_PENDING_MEETING_BYTES) {
+                  while (pendingModelAudioToMeeting.length && pendingModelAudioBytes + outBuf.length > MAX_PENDING_MEETING_BYTES) {
+                    const removed = pendingModelAudioToMeeting.shift();
+                    pendingModelAudioBytes -= (removed?.length || 0);
+                  }
+                }
+                if (pendingModelAudioBytes + outBuf.length <= MAX_PENDING_MEETING_BYTES) {
+                  pendingModelAudioToMeeting.push(outBuf);
+                  pendingModelAudioBytes += outBuf.length;
+                  console.log('Buffered Gemini audio (no /audio-in) bytes=', outBuf.length, 'pending=', pendingModelAudioBytes);
+                } else {
+                  console.log('Dropping Gemini audio (buffer full) bytes=', outBuf.length);
+                }
               }
             }
           } catch (err) {
@@ -328,9 +411,21 @@ wssOut.on('connection', (ws) => {
           console.log('Dropped /audio-out frame due to feedback suppression (recent model audio forwarded)');
           return;
         }
-        // Rate-limit sending to Gemini to avoid over-triggering repeated responses
-        if (now - lastSentToGeminiAt < GEMINI_SEND_MIN_INTERVAL_MS) {
-          console.log('Skipping sendRealtimeInput due to rate limit');
+        // Rate-limit sending to Gemini to avoid over-triggering repeated responses.
+        const timeSinceLast = now - lastSentToGeminiAt;
+        if (timeSinceLast < GEMINI_SEND_MIN_INTERVAL_MS) {
+          // Queue frame to be flushed once the rate limit window passes.
+          if (pendingToGeminiBytes + data.length > MAX_PENDING_GEMINI_BYTES) {
+            console.log('Dropping inbound /audio-out frame due to pending buffer full bytes=', data.length);
+          } else {
+            pendingToGeminiBuffers.push(data);
+            pendingToGeminiBytes += data.length;
+            console.log('Queued /audio-out frame due to rate limit bytes=', data.length, 'pending=', pendingToGeminiBytes);
+            if (!pendingToGeminiTimer) {
+              const delay = Math.max(1, GEMINI_SEND_MIN_INTERVAL_MS - timeSinceLast);
+              pendingToGeminiTimer = setTimeout(flushPendingToGemini, delay);
+            }
+          }
           return;
         }
         lastSentToGeminiAt = now;
@@ -376,6 +471,15 @@ wssOut.on('connection', (ws) => {
     try {
       geminiSession?.close?.();
     } catch (e) {}
+    // cleanup any pending buffers/timers associated with this connection
+    try {
+      if (pendingToGeminiTimer) clearTimeout(pendingToGeminiTimer);
+    } catch (e) {}
+    pendingToGeminiTimer = null;
+    pendingToGeminiBuffers = [];
+    pendingToGeminiBytes = 0;
+    pendingModelAudioToMeeting = [];
+    pendingModelAudioBytes = 0;
   });
 });
 
