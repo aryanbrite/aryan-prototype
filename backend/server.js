@@ -96,6 +96,8 @@ app.post('/api/join', async (req, res) => {
       headers[authHeader] = meetingBaasKey;
     }
 
+    console.log('MeetingBaaS call:', meetingBaasApiUrl, 'version=', process.env.MEETING_BAAS_API_VERSION || 'v1', 'headers=', Object.keys(headers), 'keyPresent=', !!meetingBaasKey);
+
     const response = await fetch(meetingBaasApiUrl, {
       method: 'POST',
       headers,
