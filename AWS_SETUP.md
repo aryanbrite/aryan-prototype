@@ -5,45 +5,27 @@ You have two domains or environments:
 1. **Frontend**: The Next.js app deployed directly on AWS Amplify.
 2. **Backend**: The Node.js Express/WebSocket backend deployed on AWS EC2 or App Runner.
 
-## 1. Backend (Node.js) Deployment - EC2
-WebSockets for Gemini Live stream are best hosted in an environment with persistent connections, like an EC2 instance.
+## 1. Backend (Node.js) Deployment - AWS App Runner
+AWS App Runner provides an easy, "Render-style" deployment experience where you just connect your GitHub repository and it handles the build, scaling, and HTTPS automatically. It also natively supports WebSockets.
 
-1. Launch an **Ubuntu 22.04 LTS** EC2 instance.
-2. Open Ports **80**, **443**, and **22** in Security Groups.
-3. SSH into the instance: `ssh -i key.pem ubuntu@public-ip`
-4. Install Node.js:
-   ```bash
-   curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-   sudo apt-get install -y nodejs
-   ```
-5. Clone your code, enter the `backend` folder.
-6. Install dependencies and start:
-   ```bash
-   npm install
-   npm i -g pm2
-   pm2 start server.js
-   ```
-7. Use **Caddy** to set up WSS/HTTPS:
-   ```bash
-   sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https
-   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
-   sudo apt update
-   sudo apt install caddy
-   ```
-   Edit `/etc/caddy/Caddyfile`:
-   ```
-   api.your-domain.com {
-       reverse_proxy localhost:8000
-   }
-   ```
-   Restart: `sudo systemctl restart caddy`.
-8. Ensure you add backend variables in the instance `.env`:
-   ```env
-   MEETING_BAAS_API_KEY=your_key
-   GEMINI_API_KEY=your_key
-   PUBLIC_URL=https://api.your-domain.com
-   ```
+1. Go to **AWS App Runner** in your AWS Console.
+2. Click **Create an App Runner service**.
+3. **Repository Type**: Select **Source code repository**.
+4. Connect your GitHub account and select your repository.
+5. **Deployment trigger**: Choose **Automatic** (so it deploys when you push to main).
+6. Configure the build:
+   - **Source code directory**: `backend`
+   - **Runtime**: Node.js 18
+   - **Build command**: `npm install`
+   - **Start command**: `npm start` (Make sure to add `"start": "node server.js"` in your `backend/package.json` scripts)
+   - **Port**: `8000`
+7. Expand **Environment variables** and add:
+   - `MEETING_BAAS_API_KEY` = `your_key`
+   - `GEMINI_API_KEY` = `your_key`
+   - *(Note: `PUBLIC_URL` will be the App Runner URL given to you after creation (e.g., `https://xxxx.region.awsapprunner.com`), so you may need to update this env var after the first deploy).*
+8. Click **Create & deploy**.
+
+App Runner will automatically give you a secure `https://` domain that fully supports WebSockets!
 
 ## 2. Frontend (Next.js) Deployment - AWS Amplify
 Amplify Hosting manages Next.js SSR apps seamlessly.
