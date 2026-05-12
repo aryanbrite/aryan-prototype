@@ -84,8 +84,8 @@ app.post('/api/join', async (req, res) => {
           .status(500)
           .json({ status: 'error', message: 'MEETING_BAAS_API_KEY (v2) not set' });
       }
-      const authHeader = process.env.MEETING_BAAS_AUTH_HEADER || 'Authorization';
-      headers[authHeader] = `Bearer ${meetingBaasKey}`;
+      const authHeader = process.env.MEETING_BAAS_AUTH_HEADER || 'x-meeting-baas-api-key';
+      headers[authHeader] = meetingBaasKey;
     } else {
       if (!meetingBaasKey) {
         return res
@@ -113,7 +113,7 @@ app.post('/api/join', async (req, res) => {
     }
 
     if (response.ok) {
-      const botId = data.bot_id || data.id || data.botId || null;
+      const botId = data.data?.bot_id || data.bot_id || data.id || data.botId || null;
       res.json({ status: 'success', bot_id: botId, raw: data });
     } else {
       console.error('MeetingBaaS error', response.status, data);
