@@ -148,56 +148,69 @@ wssIn.on('connection', (ws) => {
 });
 
 wssOut.on('connection', async (ws) => {
-    console.log("Meeting BaaS connected to /audio-out (streaming.output)");
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  
-    const MODEL  = "gemini-3.1-flash-live-preview";
-    const CONFIG = {
-      responseModalities: [Modality.AUDIO],
-      speechConfig: {
-        voiceConfig: {
-          prebuiltVoiceConfig: { voiceName: "Kore" }
-        }
-      },
-      systemInstruction: "You are a helpful meeting assistant."
-    };
-  
-    try {
-        const session = await ai.live.connect({ model: MODEL, config: CONFIG });
-        
-        ws.on('message', (data) => {
-            // Send mic input to Gemini
-            if (Buffer.isBuffer(data)) {
-                // we'll send it as base64
-                session.sendRealtimeInput({
-                    audio: {
-                      data: data.toString("base64"),
-                      mimeType: "audio/pcm;rate=16000"
-                    }
-                });
-            }
-        });
+  console.log("Meeting BaaS connected to /audio-out (streaming.output)");
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-        // For Node.js without simple resampler, we rely on Gemini to support 16kHz directly or manually handle. 
-        // Currently Gemini outputs 24kHz natively. Without an audioop equivalent in node out-of-the-box easily, 
-        // Meeting BaaS strictly states it only supports 16kHz currently for input.
-        // For production, using a library like 'wavefile' or native resampler is required in Node.js.
-        // For the sake of the prototype, we assume BaaS tolerates it, OR we leave it raw. We will just pass it, might sound fast.
-        
-        for await (const response of session) {
-            if (response.data) {
-                // response.data is Buffer (24kHz PCM bytes)
-                // Ideally this point needs resampling to 16kHz. 
-                // We'll pass it to input WS. 
-                if (activeInputWs && activeInputWs.readyState === WebSocket.OPEN) {
-                    activeInputWs.send(response.data);
-                }
-            }
+  const MODEL = "gemini-3.1-flash-live-preview";
+  const CONFIG = {
+    responseModalities: [Modality.AUDIO],
+    speechConfig: {
+      voiceConfig: {
+        prebuiltVoiceConfig: { voiceName: "Kore" }
+      }
+    },
+    systemInstruction: "You are a helpful meeting assistant."
+  };
+
+  try {
+    console.log('Gemini: connecting to live model', MODEL);
+    const session = await ai.live.connect({ model: MODEL, config: CONFIG });
+    console.log('Gemini: live session connected');
+
+    ws.on('message', (data) => {
+      try {
+        if (Buffer.isBuffer(data)) {
+          console.log('Received audio from MeetingBaaS /audio-out bytes=', data.length);
+          const base64 = data.toString('base64');
+          session.sendRealtimeInput({
+            audio: { data: base64, mimeType: 'audio/pcm;rate=16000' }
+          }).catch((err) => console.error('sendRealtimeInput error:', err));
+        } else {
+          console.log('Received non-buffer message on /audio-out, type=', typeof data);
         }
-        
-    } catch (e) {
-        console.error("Gemini Error:", e);
+      } catch (err) {
+        console.error('Error handling /audio-out message:', err);
+      }
+    });
+
+    for await (const response of session) {
+      try {
+        const respBytes = Buffer.isBuffer(response.data)
+          ? response.data.length
+          : response.data
+          ? Buffer.byteLength(String(response.data))
+          : 0;
+        console.log('Gemini response event keys=', Object.keys(response || {}), 'dataBytes=', respBytes);
+
+        if (response.data) {
+          if (activeInputWs && activeInputWs.readyState === WebSocket.OPEN) {
+            activeInputWs.send(response.data);
+            console.log('Forwarded Gemini audio to /audio-in bytes=', respBytes);
+          } else {
+            console.log('No active /audio-in connection to forward Gemini audio');
+          }
+        } else if (response.text) {
+          console.log('Gemini text response:', String(response.text).slice(0, 300));
+        }
+      } catch (err) {
+        console.error('Error processing Gemini response:', err);
+      }
     }
+
+    console.log('Gemini session iterator ended');
+  } catch (e) {
+    console.error('Gemini Error:', e);
+  }
 });
 
 const PORT = process.env.PORT || 8000;
