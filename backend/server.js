@@ -47,6 +47,39 @@ server.on('upgrade', (request, socket, head) => {
   }
 });
 
+// Parse sample rate out of a mimeType like "audio/pcm;rate=24000" or "audio/pcm; 24000hz"
+function parseRateFromMimeType(mimeType) {
+  if (!mimeType) return null;
+  try {
+    const m = /rate=(\d+)/i.exec(mimeType);
+    if (m) return parseInt(m[1], 10);
+    const hz = /(\d{3,5})\s*hz/i.exec(mimeType);
+    if (hz) return parseInt(hz[1], 10);
+  } catch (e) {}
+  return null;
+}
+
+// Very small/naive PCM16LE resampler using linear interpolation.
+// Accepts a Buffer of 16-bit signed little-endian PCM samples.
+function resamplePcm16LE(buffer, srcRate, dstRate) {
+  if (!buffer || srcRate === dstRate) return buffer;
+  const srcSamples = Math.floor(buffer.length / 2);
+  const dstSamples = Math.floor(srcSamples * dstRate / srcRate);
+  const out = Buffer.alloc(dstSamples * 2);
+  for (let i = 0; i < dstSamples; i++) {
+    const srcPos = (i * srcRate) / dstRate;
+    const i0 = Math.floor(srcPos);
+    const i1 = Math.min(i0 + 1, srcSamples - 1);
+    const frac = srcPos - i0;
+    const s0 = buffer.readInt16LE(i0 * 2) / 32768;
+    const s1 = buffer.readInt16LE(i1 * 2) / 32768;
+    const sample = s0 + (s1 - s0) * frac;
+    const s16 = Math.max(-1, Math.min(1, sample)) * 32767 | 0;
+    out.writeInt16LE(s16, i * 2);
+  }
+  return out;
+}
+
 let activeInputWs = null;
 
 // Endpoint for bot joining
@@ -199,10 +232,24 @@ wssOut.on('connection', (ws) => {
               const mimeType = String(inlineData.mimeType ?? 'audio/pcm;rate=24000');
               const srcRate = parseRateFromMimeType(mimeType) ?? 24000;
               const buf = Buffer.from(String(inlineData.data), 'base64');
-              // If MeetingBaaS expects raw PCM bytes at 16000, resample if needed.
+              const destRate = 16000; // MeetingBaaS streaming_config.audio_frequency
+              let outBuf = buf;
+              if (srcRate !== destRate) {
+                try {
+                  outBuf = resamplePcm16LE(buf, srcRate, destRate);
+                  console.log('Resampled Gemini audio', srcRate, '->', destRate, 'bytes=', outBuf.length);
+                } catch (e) {
+                  console.error('Resample error:', e);
+                  outBuf = buf;
+                }
+              }
               if (activeInputWs && activeInputWs.readyState === WebSocket.OPEN) {
-                activeInputWs.send(buf);
-                console.log('Forwarded Gemini audio part to /audio-in bytes=', buf.length);
+                try {
+                  activeInputWs.send(outBuf);
+                  console.log('Forwarded Gemini audio part to /audio-in bytes=', outBuf.length);
+                } catch (e) {
+                  console.error('Error forwarding Gemini audio to /audio-in:', e);
+                }
               } else {
                 console.log('No active /audio-in connection to forward Gemini audio');
               }
