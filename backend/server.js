@@ -199,6 +199,12 @@ wssOut.on('connection', (ws) => {
   let geminiSessionPromise = null;
   let hasSentKickoff = false;
 
+  // Feedback/loop suppression and send-rate limiting
+  let lastForwardedToMeetingAt = 0;
+  const FEEDBACK_SUPPRESSION_MS = 1000; // ms to suppress inbound frames after forwarding model audio
+  let lastSentToGeminiAt = 0;
+  const GEMINI_SEND_MIN_INTERVAL_MS = 200; // min interval between sendRealtimeInput calls
+
   function ensureGeminiConnected() {
     if (geminiSessionPromise) return geminiSessionPromise;
     geminiSessionPromise = ai.live.connect({
@@ -246,6 +252,7 @@ wssOut.on('connection', (ws) => {
               if (activeInputWs && activeInputWs.readyState === WebSocket.OPEN) {
                 try {
                   activeInputWs.send(outBuf);
+                  lastForwardedToMeetingAt = Date.now();
                   console.log('Forwarded Gemini audio part to /audio-in bytes=', outBuf.length);
                 } catch (e) {
                   console.error('Error forwarding Gemini audio to /audio-in:', e);
@@ -289,7 +296,20 @@ wssOut.on('connection', (ws) => {
   ws.on('message', (data) => {
     try {
       if (Buffer.isBuffer(data)) {
+        const now = Date.now();
         console.log('Received audio from MeetingBaaS /audio-out bytes=', data.length);
+        // Suppress frames that are likely the model's own audio reflected back
+        if (now - lastForwardedToMeetingAt < FEEDBACK_SUPPRESSION_MS) {
+          console.log('Dropped /audio-out frame due to feedback suppression (recent model audio forwarded)');
+          return;
+        }
+        // Rate-limit sending to Gemini to avoid over-triggering repeated responses
+        if (now - lastSentToGeminiAt < GEMINI_SEND_MIN_INTERVAL_MS) {
+          console.log('Skipping sendRealtimeInput due to rate limit');
+          return;
+        }
+        lastSentToGeminiAt = now;
+
         const base64 = data.toString('base64');
         ensureGeminiConnected();
         geminiSessionPromise
