@@ -91,7 +91,7 @@ app.post('/api/join', async (req, res) => {
 
   const payload = {
     meeting_url: meeting_url,
-    bot_name: "Gemini Assistant",
+    bot_name: "Sukhdev ki ex",
     recording_mode: "speaker_view",
     automatic_leave: { waiting_room_timeout: 600 }
   };
