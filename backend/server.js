@@ -147,7 +147,7 @@ wssIn.on('connection', (ws) => {
   });
 });
 
-wssOut.on('connection', async (ws) => {
+wssOut.on('connection', (ws) => {
   console.log("Meeting BaaS connected to /audio-out (streaming.output)");
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -162,55 +162,105 @@ wssOut.on('connection', async (ws) => {
     systemInstruction: "You are a helpful meeting assistant."
   };
 
-  try {
-    console.log('Gemini: connecting to live model', MODEL);
-    const session = await ai.live.connect({ model: MODEL, config: CONFIG });
-    console.log('Gemini: live session connected');
+  let geminiSession = null;
+  let geminiSessionPromise = null;
+  let hasSentKickoff = false;
 
-    ws.on('message', (data) => {
-      try {
-        if (Buffer.isBuffer(data)) {
-          console.log('Received audio from MeetingBaaS /audio-out bytes=', data.length);
-          const base64 = data.toString('base64');
-          session.sendRealtimeInput({
-            audio: { data: base64, mimeType: 'audio/pcm;rate=16000' }
-          }).catch((err) => console.error('sendRealtimeInput error:', err));
-        } else {
-          console.log('Received non-buffer message on /audio-out, type=', typeof data);
-        }
-      } catch (err) {
-        console.error('Error handling /audio-out message:', err);
-      }
+  function ensureGeminiConnected() {
+    if (geminiSessionPromise) return geminiSessionPromise;
+    geminiSessionPromise = ai.live.connect({
+      model: MODEL,
+      callbacks: {
+        onopen: () => {
+          console.log('Gemini: onopen');
+          if (hasSentKickoff) return;
+          hasSentKickoff = true;
+          const kickoffText = 'Start.';
+          geminiSessionPromise
+            .then((session) => {
+              try {
+                session.sendClientContent({
+                  turns: { role: 'user', parts: [{ text: kickoffText }] },
+                  turnComplete: true,
+                });
+              } catch (e) {
+                console.error('sendClientContent error:', e);
+              }
+            })
+            .catch((e) => console.error('kickoff then error:', e));
+        },
+        onmessage: (message) => {
+          try {
+            const parts = message?.serverContent?.modelTurn?.parts;
+            if (!parts) return;
+            for (const part of parts) {
+              const inlineData = part?.inlineData;
+              if (!inlineData?.data) continue;
+              const mimeType = String(inlineData.mimeType ?? 'audio/pcm;rate=24000');
+              const srcRate = parseRateFromMimeType(mimeType) ?? 24000;
+              const buf = Buffer.from(String(inlineData.data), 'base64');
+              // If MeetingBaaS expects raw PCM bytes at 16000, resample if needed.
+              if (activeInputWs && activeInputWs.readyState === WebSocket.OPEN) {
+                activeInputWs.send(buf);
+                console.log('Forwarded Gemini audio part to /audio-in bytes=', buf.length);
+              } else {
+                console.log('No active /audio-in connection to forward Gemini audio');
+              }
+            }
+          } catch (err) {
+            console.error('Error in Gemini onmessage handler:', err);
+          }
+        },
+        onclose: () => {
+          console.log('Gemini onclose');
+        },
+        onerror: (err) => {
+          console.error('Gemini onerror', err);
+        },
+      },
+      config: CONFIG,
     });
 
-    for await (const response of session) {
-      try {
-        const respBytes = Buffer.isBuffer(response.data)
-          ? response.data.length
-          : response.data
-          ? Buffer.byteLength(String(response.data))
-          : 0;
-        console.log('Gemini response event keys=', Object.keys(response || {}), 'dataBytes=', respBytes);
+    geminiSessionPromise
+      .then((session) => {
+        geminiSession = session;
+        console.log('Gemini: live session connected (promise resolved)');
+      })
+      .catch((err) => {
+        console.error('Gemini connect error:', err);
+      });
 
-        if (response.data) {
-          if (activeInputWs && activeInputWs.readyState === WebSocket.OPEN) {
-            activeInputWs.send(response.data);
-            console.log('Forwarded Gemini audio to /audio-in bytes=', respBytes);
-          } else {
-            console.log('No active /audio-in connection to forward Gemini audio');
-          }
-        } else if (response.text) {
-          console.log('Gemini text response:', String(response.text).slice(0, 300));
-        }
-      } catch (err) {
-        console.error('Error processing Gemini response:', err);
-      }
-    }
-
-    console.log('Gemini session iterator ended');
-  } catch (e) {
-    console.error('Gemini Error:', e);
+    return geminiSessionPromise;
   }
+
+  ws.on('message', (data) => {
+    try {
+      if (Buffer.isBuffer(data)) {
+        console.log('Received audio from MeetingBaaS /audio-out bytes=', data.length);
+        const base64 = data.toString('base64');
+        ensureGeminiConnected();
+        geminiSessionPromise
+          .then((session) => {
+            try {
+              session.sendRealtimeInput({ audio: { data: base64, mimeType: 'audio/pcm;rate=16000' } });
+            } catch (err) {
+              console.error('sendRealtimeInput error (sync):', err);
+            }
+          })
+          .catch((err) => console.error('geminiSessionPromise then error:', err));
+      } else {
+        console.log('Received non-buffer message on /audio-out, type=', typeof data);
+      }
+    } catch (err) {
+      console.error('Error handling /audio-out message:', err);
+    }
+  });
+
+  ws.on('close', () => {
+    try {
+      geminiSession?.close?.();
+    } catch (e) {}
+  });
 });
 
 const PORT = process.env.PORT || 8000;
