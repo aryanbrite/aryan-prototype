@@ -1,7 +1,7 @@
 ﻿# Setup Deployments: Next.js Frontend + Node.js Backend on AWS
 
 This guide covers deploying the two-folder structure entirely on AWS.
-Since App Runner is deprecated, the most reliable and cost-effective way to host persistent WebSocket connections (requried by Meeting BaaS) is on an EC2 instance using PM2 and a reverse proxy (Caddy).
+Since App Runner is deprecated, the most reliable and cost-effective way to host persistent WebSocket connections (required by Meeting BaaS) is an EC2 instance using PM2 and a reverse proxy (Caddy).
 
 1. **Frontend**: The Next.js app deployed securely on AWS Amplify.
 2. **Backend**: The Node.js Express/WebSocket backend deployed on AWS EC2.
@@ -9,89 +9,131 @@ Since App Runner is deprecated, the most reliable and cost-effective way to host
 ## 1. Backend (Node.js) Deployment - AWS EC2
 WebSockets for Gemini Live stream need persistent connections, making EC2 ideal.
 
-1. Launch an **Ubuntu 22.04 LTS** EC2 instance.
-   - Instance type: \	3.micro\ or \	3.small\ is fine.
-2. In the **Network settings** section of the launch wizard, make sure to check the following boxes under "Firewall (security groups)":
-   - [x] **Allow SSH traffic from** (Anywhere)
-   - [x] **Allow HTTPS traffic from the internet**
-   - [x] **Allow HTTP traffic from the internet**
-3. SSH into the instance:
-   \\\ash
-   ssh -i your-key.pem ubuntu@<your-ec2-public-ip>
-   \\\
-4. Install Node.js and PM2:
-   \\\ash
-   curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-   sudo apt-get install -y nodejs
-   sudo npm install -g pm2
-   \\\
-5. Clone your repository and start the backend:
-   \\\ash
-   git clone <your-repo-url>
-   cd aryan-prototype/backend
-   npm install
-   pm2 start server.js --name "meeting-bot"
-   pm2 save
-   pm2 startup
-   \\\
-6. Get a domain name, and point an A record to your EC2 public IP (e.g., \pi.yourdomain.com\).
-7. Install **Caddy** (It automatically gets SSL certificates so \wss://\ works):
-   \\\ash
-   sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https
-   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
-   sudo apt update
-   sudo apt install caddy
-   \\\
-8. Edit the Caddyfile:
-   \\\ash
-   sudo nano /etc/caddy/Caddyfile
-   \\\
-   Replace everything with:
-   \\\
-   api.yourdomain.com {
-       reverse_proxy localhost:8000
-   }
-   \\\
-9. Restart Caddy: \sudo systemctl restart caddy\
-10. Create an \.env\ file in your backend folder (\
-ano .env\):
-    \\\env
-    MEETING_BAAS_API_KEY=your_key
-    GEMINI_API_KEY=your_key
-    PUBLIC_URL=https://api.yourdomain.com
-    \\\
-    Restart the app: \pm2 restart meeting-bot\
+### Step A: Launch an EC2 Instance (Launch Wizard)
+Use the "Launch an instance" screen and follow these specific choices:
+
+1. **Name and tags**: set a name like `prototype`.
+2. **Application and OS Images (AMI)**:
+   - Choose **Ubuntu** from "Quick Start".
+   - Pick **Ubuntu Server 24.04 LTS (HVM)** or **Ubuntu Server 26.04 LTS (HVM)**.
+   - Avoid AMIs that include SQL Server or other bundled software.
+3. **Instance type**: choose `t3.micro` or `t3.small`.
+4. **Key pair (login)**:
+    - Create a new key pair if you do not have one.
+    - Download the `.pem` file and keep it safe.
+5. **Network settings**:
+    - Leave VPC and subnet as default.
+    - Keep **Auto-assign public IP** enabled.
+    - In **Firewall (security groups)**, check these boxes:
+       - [x] Allow SSH traffic from (Anywhere)
+       - [x] Allow HTTPS traffic from the internet
+       - [x] Allow HTTP traffic from the internet
+    - Remove any unrelated rule (like MSSQL) if it is pre-selected.
+6. **Storage**: default 8 GiB is fine.
+7. Click **Launch instance**.
+
+### Step B: SSH Into the Instance
+Once the instance is running, copy its public IPv4 address.
+
+```bash
+ssh -i your-key.pem ubuntu@<your-ec2-public-ip>
+```
+
+### Step C: Install Node.js and PM2
+```bash
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt-get install -y nodejs
+sudo npm install -g pm2
+```
+
+### Step D: Clone and Start the Backend
+```bash
+git clone <your-repo-url>
+cd aryan-prototype/backend
+npm install
+pm2 start server.js --name "meeting-bot"
+pm2 save
+pm2 startup
+```
+
+### Step E: Add a Domain and HTTPS (Caddy)
+1. Create an A record pointing `api.yourdomain.com` to your EC2 public IP.
+2. Install Caddy:
+
+```bash
+sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+sudo apt update
+sudo apt install caddy
+```
+
+3. Edit the Caddyfile:
+
+```bash
+sudo nano /etc/caddy/Caddyfile
+```
+
+Replace with:
+
+```
+api.yourdomain.com {
+      reverse_proxy localhost:8000
+}
+```
+
+4. Restart Caddy:
+
+```bash
+sudo systemctl restart caddy
+```
+
+### Step F: Set Backend Environment Variables
+Create a `.env` file in the backend folder:
+
+```env
+MEETING_BAAS_API_KEY=your_key
+GEMINI_API_KEY=your_key
+PUBLIC_URL=https://api.yourdomain.com
+```
+
+Restart the app:
+
+```bash
+pm2 restart meeting-bot
+```
 
 ## 2. Frontend (Next.js) Deployment - AWS Amplify
 Amplify Hosting manages Next.js SSR apps seamlessly.
 
 1. Go to **AWS Amplify Console** > Create new App.
 2. Connect your GitHub repository.
-3. Select the \rontend\ directory as the build path or use this Build setting:
-   \\\yaml
-   version: 1
-   applications:
-     - appRoot: frontend
-       frontend:
+3. Select the `frontend` directory as the build path or use this build setting:
+
+```yaml
+version: 1
+applications:
+   - appRoot: frontend
+      frontend:
          phases:
-           preBuild:
-             commands:
-               - npm ci
-           build:
-             commands:
-               - npm run build
+            preBuild:
+               commands:
+                  - npm ci
+            build:
+               commands:
+                  - npm run build
          artifacts:
-           baseDirectory: .next
-           files:
-             - '**/*'
+            baseDirectory: .next
+            files:
+               - '**/*'
          cache:
-           paths:
-             - node_modules/**/*
-   \\\
+            paths:
+               - node_modules/**/*
+```
+
 4. Set the Environment Variable in Amplify:
-   - \NEXT_PUBLIC_BACKEND_URL\ = \https://api.yourdomain.com\
-   - *(Set this to the exact domain you configured for your EC2 backend).*
+    - `NEXT_PUBLIC_BACKEND_URL` = `https://api.yourdomain.com`
+    - *(Set this to the exact domain you configured for your EC2 backend.)*
 5. Click **Save and Deploy**.
 
-Now, your URL generated by Amplify handles the Next.js UI, which talks securely to your EC2 backend to spin up the WebSockets!
+Now, your URL generated by Amplify handles the Next.js UI, which talks securely to your EC2 backend to spin up the WebSockets.
