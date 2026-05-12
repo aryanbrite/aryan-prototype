@@ -201,9 +201,13 @@ wssOut.on('connection', (ws) => {
 
   // Feedback/loop suppression and send-rate limiting
   let lastForwardedToMeetingAt = 0;
-  const FEEDBACK_SUPPRESSION_MS = 1000; // ms to suppress inbound frames after forwarding model audio
+  const FEEDBACK_SUPPRESSION_MS = 3000; // ms to suppress inbound frames after forwarding model audio
   let lastSentToGeminiAt = 0;
   const GEMINI_SEND_MIN_INTERVAL_MS = 200; // min interval between sendRealtimeInput calls
+  // Duplicate model text suppression
+  let lastModelText = null;
+  let lastModelTextAt = 0;
+  const MODEL_TEXT_DEDUPE_MS = 20000; // suppress identical model text for 20s
 
   function ensureGeminiConnected() {
     if (geminiSessionPromise) return geminiSessionPromise;
@@ -213,8 +217,14 @@ wssOut.on('connection', (ws) => {
         onopen: () => {
           console.log('Gemini: onopen');
           if (hasSentKickoff) return;
+          // By default we DO NOT send an automatic kickoff to avoid repeated prompts.
+          // Enable it explicitly with env var GEMINI_SEND_KICKOFF=true and optionally set GEMINI_KICKOFF_TEXT.
+          if (process.env.GEMINI_SEND_KICKOFF !== 'true') {
+            console.log('Skipping kickoff send (GEMINI_SEND_KICKOFF != true)');
+            return;
+          }
           hasSentKickoff = true;
-          const kickoffText = 'Start.';
+          const kickoffText = process.env.GEMINI_KICKOFF_TEXT || 'Start.';
           geminiSessionPromise
             .then((session) => {
               try {
@@ -233,6 +243,21 @@ wssOut.on('connection', (ws) => {
             const parts = message?.serverContent?.modelTurn?.parts;
             if (!parts) return;
             for (const part of parts) {
+              // Suppress repeated text parts from the model to avoid repeated prompts.
+              if (part?.text) {
+                const txt = String(part.text || '').trim();
+                const now = Date.now();
+                if (txt && txt === lastModelText && now - lastModelTextAt < MODEL_TEXT_DEDUPE_MS) {
+                  console.log('Suppressed duplicate model text:', txt);
+                  continue;
+                }
+                if (txt) {
+                  lastModelText = txt;
+                  lastModelTextAt = now;
+                  console.log('Model text:', txt);
+                }
+              }
+
               const inlineData = part?.inlineData;
               if (!inlineData?.data) continue;
               const mimeType = String(inlineData.mimeType ?? 'audio/pcm;rate=24000');
