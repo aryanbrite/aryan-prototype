@@ -11,7 +11,10 @@ WebSockets for Gemini Live stream need persistent connections, making EC2 ideal.
 
 1. Launch an **Ubuntu 22.04 LTS** EC2 instance.
    - Instance type: \	3.micro\ or \	3.small\ is fine.
-2. In the Security Group, open Ports **80 (HTTP)**, **443 (HTTPS)**, and **22 (SSH)**.
+2. In the **Network settings** section of the launch wizard, make sure to check the following boxes under "Firewall (security groups)":
+   - [x] **Allow SSH traffic from** (Anywhere)
+   - [x] **Allow HTTPS traffic from the internet**
+   - [x] **Allow HTTP traffic from the internet**
 3. SSH into the instance:
    \\\ash
    ssh -i your-key.pem ubuntu@<your-ec2-public-ip>
