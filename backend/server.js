@@ -211,11 +211,17 @@ wssOut.on('connection', (ws) => {
             console.error('Error in Gemini onmessage handler:', err);
           }
         },
-        onclose: () => {
-          console.log('Gemini onclose');
+        onclose: (event) => {
+          console.log('Gemini onclose', event);
+          geminiSession = null;
+          geminiSessionPromise = null;
+          hasSentKickoff = false;
         },
         onerror: (err) => {
           console.error('Gemini onerror', err);
+          geminiSession = null;
+          geminiSessionPromise = null;
+          hasSentKickoff = false;
         },
       },
       config: CONFIG,
@@ -242,12 +248,30 @@ wssOut.on('connection', (ws) => {
         geminiSessionPromise
           .then((session) => {
             try {
-              session.sendRealtimeInput({ audio: { data: base64, mimeType: 'audio/pcm;rate=16000' } });
+              const maybe = session.sendRealtimeInput({ audio: { data: base64, mimeType: 'audio/pcm;rate=16000' } });
+              if (maybe && typeof maybe.then === 'function') {
+                maybe
+                  .then(() => console.log('sendRealtimeInput ok'))
+                  .catch((err) => {
+                    console.error('sendRealtimeInput error:', err);
+                    geminiSession = null;
+                    geminiSessionPromise = null;
+                    hasSentKickoff = false;
+                  });
+              }
             } catch (err) {
               console.error('sendRealtimeInput error (sync):', err);
+              geminiSession = null;
+              geminiSessionPromise = null;
+              hasSentKickoff = false;
             }
           })
-          .catch((err) => console.error('geminiSessionPromise then error:', err));
+          .catch((err) => {
+            console.error('geminiSessionPromise then error:', err);
+            geminiSession = null;
+            geminiSessionPromise = null;
+            hasSentKickoff = false;
+          });
       } else {
         console.log('Received non-buffer message on /audio-out, type=', typeof data);
       }
