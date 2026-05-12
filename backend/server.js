@@ -14,6 +14,21 @@ const wss_url = PUBLIC_URL.replace("https://", "wss://").replace("http://", "ws:
 
 const server = createServer(app);
 
+app.get('/', (_req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'meeting-bot-backend'
+  });
+});
+
+app.get('/health', (_req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'meeting-bot-backend',
+    public_url: PUBLIC_URL
+  });
+});
+
 // Use a raw ws server or two paths. Using two endpoints manually. 
 const wssIn = new WebSocket.Server({ noServer: true });
 const wssOut = new WebSocket.Server({ noServer: true });
