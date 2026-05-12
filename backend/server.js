@@ -60,13 +60,23 @@ app.post('/api/join', async (req, res) => {
     meeting_url: meeting_url,
     bot_name: "Gemini Assistant",
     recording_mode: "speaker_view",
-    streaming: {
+    automatic_leave: { waiting_room_timeout: 600 }
+  };
+
+  if (process.env.MEETING_BAAS_API_VERSION === 'v2') {
+    payload.streaming_enabled = true;
+    payload.streaming_config = {
+      audio_frequency: 16000,
+      input_url: `${wss_url}/audio-in`,
+      output_url: `${wss_url}/audio-out`
+    };
+  } else {
+    payload.streaming = {
       audio_frequency: "16khz",
       input: `${wss_url}/audio-in`,
       output: `${wss_url}/audio-out`
-    },
-    automatic_leave: { waiting_room_timeout: 600 }
-  };
+    };
+  }
 
   try {
     const meetingBaasApiUrl =
