@@ -69,23 +69,57 @@ app.post('/api/join', async (req, res) => {
   };
 
   try {
-    const response = await fetch("https://api.meetingbaas.com/bots", {
-      method: "POST",
-      headers: {
-        "x-meeting-baas-api-key": process.env.MEETING_BAAS_API_KEY,
-        "Content-Type": "application/json"
-      },
+    const meetingBaasApiUrl =
+      process.env.MEETING_BAAS_API_URL ||
+      (process.env.MEETING_BAAS_API_VERSION === 'v2'
+        ? 'https://api.meetingbaas.com/v2/bots'
+        : 'https://api.meetingbaas.com/bots');
+
+    const meetingBaasKey = process.env.MEETING_BAAS_API_KEY;
+    const headers = { 'Content-Type': 'application/json' };
+
+    if (process.env.MEETING_BAAS_API_VERSION === 'v2') {
+      if (!meetingBaasKey) {
+        return res
+          .status(500)
+          .json({ status: 'error', message: 'MEETING_BAAS_API_KEY (v2) not set' });
+      }
+      const authHeader = process.env.MEETING_BAAS_AUTH_HEADER || 'Authorization';
+      headers[authHeader] = `Bearer ${meetingBaasKey}`;
+    } else {
+      if (!meetingBaasKey) {
+        return res
+          .status(500)
+          .json({ status: 'error', message: 'MEETING_BAAS_API_KEY not set' });
+      }
+      const authHeader = process.env.MEETING_BAAS_AUTH_HEADER || 'x-meeting-baas-api-key';
+      headers[authHeader] = meetingBaasKey;
+    }
+
+    const response = await fetch(meetingBaasApiUrl, {
+      method: 'POST',
+      headers,
       body: JSON.stringify(payload)
     });
 
-    const data = await response.json();
+    const text = await response.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch (e) {
+      data = text;
+    }
+
     if (response.ok) {
-      res.json({ status: "success", bot_id: data.bot_id });
+      const botId = data.bot_id || data.id || data.botId || null;
+      res.json({ status: 'success', bot_id: botId, raw: data });
     } else {
-      res.status(response.status).json({ status: "error", message: data });
+      console.error('MeetingBaaS error', response.status, data);
+      res.status(response.status).json({ status: 'error', message: data });
     }
   } catch (err) {
-    res.status(500).json({ status: "error", message: err.message });
+    console.error('Join error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
   }
 });
 
