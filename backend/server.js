@@ -254,9 +254,7 @@ wssOut.on('connection', (ws) => {
           try {
             if (message?.serverContent?.interrupted) {
               console.log('Model was interrupted!');
-              // Clear whatever we have waiting to send to MeetingBaaS
-              pendingModelAudioToMeeting = [];
-              pendingModelAudioBytes = 0;
+              playbackQueue = Buffer.alloc(0); // Instantly stop sending audio to MeetingBaaS
             }
 
             const parts = message?.serverContent?.modelTurn?.parts;
@@ -283,12 +281,8 @@ wssOut.on('connection', (ws) => {
                 }
               }
               if (activeInputWs && activeInputWs.readyState === WebSocket.OPEN) {
-                try {
-                  activeInputWs.send(outBuf);
-                  console.log('Forwarded Gemini audio part to /audio-in bytes=', outBuf.length);
-                } catch (e) {
-                  console.error('Error forwarding Gemini audio to /audio-in:', e);
-                }
+                playbackQueue = Buffer.concat([playbackQueue, outBuf]);
+                startPlaybackRoutine();
               } else {
                 // Buffer model audio when there is no /audio-in connected so we can
                 // forward it once a client connects. Cap buffer size to avoid OOM.
@@ -343,7 +337,33 @@ wssOut.on('connection', (ws) => {
   let pendingToGeminiBuffers = [];
   let pendingToGeminiBytes = 0;
   let pendingToGeminiTimer = null;
-  const CHUNK_INTERVAL_MS = 20; // 20ms chunks (lowest latency recommended by Gemini docs)
+  const CHUNK_INTERVAL_MS = 20;
+
+  // Real-time playback pacer for Gemini -> MeetingBaaS
+  let playbackQueue = Buffer.alloc(0);
+  let playbackTimer = null;
+  let lastForwardedToMeetingAt = 0;
+  const FEEDBACK_SUPPRESSION_MS = 1500;
+
+  function startPlaybackRoutine() {
+    if (playbackTimer) return;
+    playbackTimer = setInterval(() => {
+      if (!activeInputWs || activeInputWs.readyState !== WebSocket.OPEN) return;
+      if (playbackQueue.length === 0) return;
+      
+      // Send 50ms of audio at a time (16000 rate * 2 bytes = 32000 bytes/sec -> 1600 bytes/50ms)
+      const bytesToSend = Math.min(1600, playbackQueue.length);
+      const chunk = playbackQueue.subarray(0, bytesToSend);
+      playbackQueue = playbackQueue.subarray(bytesToSend);
+      
+      try {
+        activeInputWs.send(chunk);
+        lastForwardedToMeetingAt = Date.now();
+      } catch (e) {
+        console.error('Playback error:', e);
+      }
+    }, 50);
+  }
 
   const flushPendingToGemini = () => {
     pendingToGeminiTimer = null;
@@ -388,6 +408,12 @@ wssOut.on('connection', (ws) => {
   ws.on('message', (data) => {
     try {
       if (Buffer.isBuffer(data)) {
+        const now = Date.now();
+        // Soft echo suppression - if we literally just played audio, drop the mic feed to prevent bot hearing itself looping
+        if (now - lastForwardedToMeetingAt < FEEDBACK_SUPPRESSION_MS) {
+          return;
+        }
+
         pendingToGeminiBuffers.push(data);
         pendingToGeminiBytes += data.length;
         if (!pendingToGeminiTimer) {
@@ -406,9 +432,12 @@ wssOut.on('connection', (ws) => {
       geminiSession?.close?.();
     } catch (e) {}
     if (pendingToGeminiTimer) clearTimeout(pendingToGeminiTimer);
+    if (playbackTimer) clearInterval(playbackTimer);
+    playbackTimer = null;
     pendingToGeminiTimer = null;
     pendingToGeminiBuffers = [];
     pendingToGeminiBytes = 0;
+    playbackQueue = Buffer.alloc(0);
     pendingModelAudioToMeeting = [];
     pendingModelAudioBytes = 0;
   });
