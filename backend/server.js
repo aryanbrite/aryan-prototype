@@ -234,14 +234,9 @@ wssOut.on('connection', (ws) => {
         onopen: () => {
           console.log('Gemini: onopen');
           if (hasSentKickoff) return;
-          // By default we DO NOT send an automatic kickoff to avoid repeated prompts.
-          // Enable it explicitly with env var GEMINI_SEND_KICKOFF=true and optionally set GEMINI_KICKOFF_TEXT.
-          if (process.env.GEMINI_SEND_KICKOFF !== 'true') {
-            console.log('Skipping kickoff send (GEMINI_SEND_KICKOFF != true)');
-            return;
-          }
+          // Automatically prompt the bot so it introduces itself
           hasSentKickoff = true;
-          const kickoffText = process.env.GEMINI_KICKOFF_TEXT || 'Start.';
+          const kickoffText = process.env.GEMINI_KICKOFF_TEXT || 'Hello! Please introduce yourself to the meeting.';
           geminiSessionPromise
             .then((session) => {
               try {
