@@ -217,66 +217,23 @@ wssOut.on('connection', (ws) => {
         prebuiltVoiceConfig: { voiceName: "Kore" }
       }
     },
-    systemInstruction: "You are a helpful meeting assistant."
+    systemInstruction: "You are a helpful meeting assistant.",
+    realtimeInputConfig: {
+      automaticActivityDetection: {
+        disabled: false,
+        startOfSpeechSensitivity: "START_SENSITIVITY_HIGH",
+        endOfSpeechSensitivity: "END_SENSITIVITY_HIGH",
+        prefixPaddingMs: 20,
+        silenceDurationMs: 100
+      }
+    }
   };
 
   let geminiSession = null;
   let geminiSessionPromise = null;
   let hasSentKickoff = false;
 
-  // Feedback/loop suppression and send-rate limiting
-  let lastForwardedToMeetingAt = 0;
-  const FEEDBACK_SUPPRESSION_MS = 3000; // ms to suppress inbound frames after forwarding model audio
-  let lastSentToGeminiAt = 0;
-  const GEMINI_SEND_MIN_INTERVAL_MS = 200; // min interval between sendRealtimeInput calls
-  // Duplicate model text suppression
-  let lastModelText = null;
-  let lastModelTextAt = 0;
-  const MODEL_TEXT_DEDUPE_MS = 20000; // suppress identical model text for 20s
 
-  // Queue outbound MeetingBaaS audio destined for Gemini when rate-limited.
-  let pendingToGeminiBuffers = [];
-  let pendingToGeminiBytes = 0;
-  let pendingToGeminiTimer = null;
-  const MAX_PENDING_GEMINI_BYTES = 16000 * 2 * 10; // up to ~10s queued
-
-  const flushPendingToGemini = () => {
-    pendingToGeminiTimer = null;
-    if (!pendingToGeminiBuffers || pendingToGeminiBuffers.length === 0) return;
-    const buf = Buffer.concat(pendingToGeminiBuffers);
-    pendingToGeminiBuffers = [];
-    pendingToGeminiBytes = 0;
-    lastSentToGeminiAt = Date.now();
-    ensureGeminiConnected();
-    geminiSessionPromise
-      .then((session) => {
-        try {
-          const base64 = buf.toString('base64');
-          const maybe = session.sendRealtimeInput({ audio: { data: base64, mimeType: 'audio/pcm;rate=16000' } });
-          if (maybe && typeof maybe.then === 'function') {
-            maybe
-              .then(() => console.log('sendRealtimeInput (flushed) ok'))
-              .catch((err) => {
-                console.error('sendRealtimeInput (flushed) error:', err);
-                geminiSession = null;
-                geminiSessionPromise = null;
-                hasSentKickoff = false;
-              });
-          }
-        } catch (err) {
-          console.error('sendRealtimeInput (flushed) error (sync):', err);
-          geminiSession = null;
-          geminiSessionPromise = null;
-          hasSentKickoff = false;
-        }
-      })
-      .catch((err) => {
-        console.error('geminiSessionPromise then error (flush):', err);
-        geminiSession = null;
-        geminiSessionPromise = null;
-        hasSentKickoff = false;
-      });
-  };
 
   function ensureGeminiConnected() {
     if (geminiSessionPromise) return geminiSessionPromise;
@@ -309,22 +266,18 @@ wssOut.on('connection', (ws) => {
         },
         onmessage: (message) => {
           try {
+            if (message?.serverContent?.interrupted) {
+              console.log('Model was interrupted!');
+              // Clear whatever we have waiting to send to MeetingBaaS
+              pendingModelAudioToMeeting = [];
+              pendingModelAudioBytes = 0;
+            }
+
             const parts = message?.serverContent?.modelTurn?.parts;
             if (!parts) return;
             for (const part of parts) {
-              // Suppress repeated text parts from the model to avoid repeated prompts.
               if (part?.text) {
-                const txt = String(part.text || '').trim();
-                const now = Date.now();
-                if (txt && txt === lastModelText && now - lastModelTextAt < MODEL_TEXT_DEDUPE_MS) {
-                  console.log('Suppressed duplicate model text:', txt);
-                  continue;
-                }
-                if (txt) {
-                  lastModelText = txt;
-                  lastModelTextAt = now;
-                  console.log('Model text:', txt);
-                }
+                console.log('Model text:', part.text);
               }
 
               const inlineData = part?.inlineData;
@@ -346,7 +299,6 @@ wssOut.on('connection', (ws) => {
               if (activeInputWs && activeInputWs.readyState === WebSocket.OPEN) {
                 try {
                   activeInputWs.send(outBuf);
-                  lastForwardedToMeetingAt = Date.now();
                   console.log('Forwarded Gemini audio part to /audio-in bytes=', outBuf.length);
                 } catch (e) {
                   console.error('Error forwarding Gemini audio to /audio-in:', e);
@@ -404,32 +356,7 @@ wssOut.on('connection', (ws) => {
   ws.on('message', (data) => {
     try {
       if (Buffer.isBuffer(data)) {
-        const now = Date.now();
-        console.log('Received audio from MeetingBaaS /audio-out bytes=', data.length);
-        // Suppress frames that are likely the model's own audio reflected back
-        if (now - lastForwardedToMeetingAt < FEEDBACK_SUPPRESSION_MS) {
-          console.log('Dropped /audio-out frame due to feedback suppression (recent model audio forwarded)');
-          return;
-        }
-        // Rate-limit sending to Gemini to avoid over-triggering repeated responses.
-        const timeSinceLast = now - lastSentToGeminiAt;
-        if (timeSinceLast < GEMINI_SEND_MIN_INTERVAL_MS) {
-          // Queue frame to be flushed once the rate limit window passes.
-          if (pendingToGeminiBytes + data.length > MAX_PENDING_GEMINI_BYTES) {
-            console.log('Dropping inbound /audio-out frame due to pending buffer full bytes=', data.length);
-          } else {
-            pendingToGeminiBuffers.push(data);
-            pendingToGeminiBytes += data.length;
-            console.log('Queued /audio-out frame due to rate limit bytes=', data.length, 'pending=', pendingToGeminiBytes);
-            if (!pendingToGeminiTimer) {
-              const delay = Math.max(1, GEMINI_SEND_MIN_INTERVAL_MS - timeSinceLast);
-              pendingToGeminiTimer = setTimeout(flushPendingToGemini, delay);
-            }
-          }
-          return;
-        }
-        lastSentToGeminiAt = now;
-
+        // Stream out directly to Gemini without arbitrary buffers/delays
         const base64 = data.toString('base64');
         ensureGeminiConnected();
         geminiSessionPromise
@@ -437,14 +364,12 @@ wssOut.on('connection', (ws) => {
             try {
               const maybe = session.sendRealtimeInput({ audio: { data: base64, mimeType: 'audio/pcm;rate=16000' } });
               if (maybe && typeof maybe.then === 'function') {
-                maybe
-                  .then(() => console.log('sendRealtimeInput ok'))
-                  .catch((err) => {
-                    console.error('sendRealtimeInput error:', err);
-                    geminiSession = null;
-                    geminiSessionPromise = null;
-                    hasSentKickoff = false;
-                  });
+                maybe.catch((err) => {
+                  console.error('sendRealtimeInput error:', err);
+                  geminiSession = null;
+                  geminiSessionPromise = null;
+                  hasSentKickoff = false;
+                });
               }
             } catch (err) {
               console.error('sendRealtimeInput error (sync):', err);
@@ -471,13 +396,6 @@ wssOut.on('connection', (ws) => {
     try {
       geminiSession?.close?.();
     } catch (e) {}
-    // cleanup any pending buffers/timers associated with this connection
-    try {
-      if (pendingToGeminiTimer) clearTimeout(pendingToGeminiTimer);
-    } catch (e) {}
-    pendingToGeminiTimer = null;
-    pendingToGeminiBuffers = [];
-    pendingToGeminiBytes = 0;
     pendingModelAudioToMeeting = [];
     pendingModelAudioBytes = 0;
   });
