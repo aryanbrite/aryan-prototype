@@ -348,7 +348,7 @@ wssOut.on('connection', (ws) => {
   let pendingToGeminiBuffers = [];
   let pendingToGeminiBytes = 0;
   let pendingToGeminiTimer = null;
-  const CHUNK_INTERVAL_MS = 100; // 100ms chunks to avoid 1007 errors on tiny/odd packets
+  const CHUNK_INTERVAL_MS = 20; // 20ms chunks (lowest latency recommended by Gemini docs)
 
   const flushPendingToGemini = () => {
     pendingToGeminiTimer = null;
