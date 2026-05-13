@@ -344,37 +344,60 @@ wssOut.on('connection', (ws) => {
     return geminiSessionPromise;
   }
 
-  ws.on('message', (data) => {
-    try {
-      if (Buffer.isBuffer(data)) {
-        // Stream out directly to Gemini without arbitrary buffers/delays
-        const base64 = data.toString('base64');
-        ensureGeminiConnected();
-        geminiSessionPromise
-          .then((session) => {
-            try {
-              const maybe = session.sendRealtimeInput({ audio: { data: base64, mimeType: 'audio/pcm;rate=16000' } });
-              if (maybe && typeof maybe.then === 'function') {
-                maybe.catch((err) => {
-                  console.error('sendRealtimeInput error:', err);
-                  geminiSession = null;
-                  geminiSessionPromise = null;
-                  hasSentKickoff = false;
-                });
-              }
-            } catch (err) {
-              console.error('sendRealtimeInput error (sync):', err);
+  // Queue outbound MeetingBaaS audio destined for Gemini 
+  let pendingToGeminiBuffers = [];
+  let pendingToGeminiBytes = 0;
+  let pendingToGeminiTimer = null;
+  const CHUNK_INTERVAL_MS = 100; // 100ms chunks to avoid 1007 errors on tiny/odd packets
+
+  const flushPendingToGemini = () => {
+    pendingToGeminiTimer = null;
+    if (pendingToGeminiBytes === 0) return;
+    
+    // Ensure even byte count for 16-bit PCM
+    let buf = Buffer.concat(pendingToGeminiBuffers);
+    const evenBytes = buf.length - (buf.length % 2);
+    if (evenBytes === 0) return;
+    
+    const chunkToSend = buf.subarray(0, evenBytes);
+    const leftover = buf.subarray(evenBytes);
+    
+    pendingToGeminiBuffers = leftover.length > 0 ? [leftover] : [];
+    pendingToGeminiBytes = leftover.length;
+
+    const base64 = chunkToSend.toString('base64');
+    ensureGeminiConnected()
+      .then((session) => {
+        try {
+          const maybe = session.sendRealtimeInput({ audio: { data: base64, mimeType: 'audio/pcm;rate=16000' } });
+          if (maybe && typeof maybe.then === 'function') {
+            maybe.catch((err) => {
+              console.error('sendRealtimeInput error:', err);
               geminiSession = null;
               geminiSessionPromise = null;
               hasSentKickoff = false;
-            }
-          })
-          .catch((err) => {
-            console.error('geminiSessionPromise then error:', err);
-            geminiSession = null;
-            geminiSessionPromise = null;
-            hasSentKickoff = false;
-          });
+            });
+          }
+        } catch (err) {
+          console.error('sendRealtimeInput error (sync):', err);
+          geminiSession = null;
+          geminiSessionPromise = null;
+          hasSentKickoff = false;
+        }
+      })
+      .catch((err) => {
+        console.error('geminiSessionPromise then error:', err);
+      });
+  };
+
+  ws.on('message', (data) => {
+    try {
+      if (Buffer.isBuffer(data)) {
+        pendingToGeminiBuffers.push(data);
+        pendingToGeminiBytes += data.length;
+        if (!pendingToGeminiTimer) {
+          pendingToGeminiTimer = setTimeout(flushPendingToGemini, CHUNK_INTERVAL_MS);
+        }
       } else {
         console.log('Received non-buffer message on /audio-out, type=', typeof data);
       }
@@ -387,6 +410,10 @@ wssOut.on('connection', (ws) => {
     try {
       geminiSession?.close?.();
     } catch (e) {}
+    if (pendingToGeminiTimer) clearTimeout(pendingToGeminiTimer);
+    pendingToGeminiTimer = null;
+    pendingToGeminiBuffers = [];
+    pendingToGeminiBytes = 0;
     pendingModelAudioToMeeting = [];
     pendingModelAudioBytes = 0;
   });
