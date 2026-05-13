@@ -217,16 +217,7 @@ wssOut.on('connection', (ws) => {
         prebuiltVoiceConfig: { voiceName: "Kore" }
       }
     },
-    systemInstruction: "You are a helpful meeting assistant.",
-    realtimeInputConfig: {
-      automaticActivityDetection: {
-        disabled: false,
-        startOfSpeechSensitivity: "START_SENSITIVITY_HIGH",
-        endOfSpeechSensitivity: "END_SENSITIVITY_HIGH",
-        prefixPaddingMs: 20,
-        silenceDurationMs: 100
-      }
-    }
+    systemInstruction: "You are a helpful meeting assistant."
   };
 
   let geminiSession = null;
