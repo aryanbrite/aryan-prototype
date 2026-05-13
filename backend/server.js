@@ -408,12 +408,6 @@ wssOut.on('connection', (ws) => {
   ws.on('message', (data) => {
     try {
       if (Buffer.isBuffer(data)) {
-        const now = Date.now();
-        // Soft echo suppression - if we literally just played audio, drop the mic feed to prevent bot hearing itself looping
-        if (now - lastForwardedToMeetingAt < FEEDBACK_SUPPRESSION_MS) {
-          return;
-        }
-
         pendingToGeminiBuffers.push(data);
         pendingToGeminiBytes += data.length;
         if (!pendingToGeminiTimer) {
