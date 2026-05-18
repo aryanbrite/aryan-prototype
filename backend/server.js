@@ -80,6 +80,18 @@ function resamplePcm16LE(buffer, srcRate, dstRate) {
   return out;
 }
 
+function getPcm16Rms(buffer) {
+  if (!buffer || buffer.length < 2) return 0;
+  const sampleCount = Math.floor(buffer.length / 2);
+  if (sampleCount === 0) return 0;
+  let sumSquares = 0;
+  for (let i = 0; i < sampleCount; i++) {
+    const sample = buffer.readInt16LE(i * 2) / 32768;
+    sumSquares += sample * sample;
+  }
+  return Math.sqrt(sumSquares / sampleCount);
+}
+
 let activeInputWs = null;
 
 // Endpoint for bot joining
@@ -215,6 +227,8 @@ wssOut.on('connection', (ws) => {
     thinkingConfig: {
       thinkingLevel: 'minimal'
     },
+    inputAudioTranscription: {},
+    outputAudioTranscription: {},
     speechConfig: {
       voiceConfig: {
         prebuiltVoiceConfig: { voiceName: "zubenelgenubi" }
@@ -258,6 +272,16 @@ wssOut.on('connection', (ws) => {
             if (message?.serverContent?.interrupted) {
               console.log('Model was interrupted!');
               playbackQueue = Buffer.alloc(0); // Instantly stop sending audio to MeetingBaaS
+            }
+
+            if (message?.serverContent?.inputTranscription?.text) {
+              console.log('User said:', message.serverContent.inputTranscription.text);
+            }
+            if (message?.serverContent?.outputTranscription?.text) {
+              console.log('Model said:', message.serverContent.outputTranscription.text);
+            }
+            if (message?.serverContent?.turnComplete) {
+              console.log('Gemini turn complete');
             }
 
             const parts = message?.serverContent?.modelTurn?.parts;
@@ -341,12 +365,38 @@ wssOut.on('connection', (ws) => {
   let pendingToGeminiBytes = 0;
   let pendingToGeminiTimer = null;
   const CHUNK_INTERVAL_MS = 20;
+  const MEETING_AUDIO_PAUSE_MS = Number(process.env.MEETING_AUDIO_PAUSE_MS || 700);
+  const SILENCE_RMS_THRESHOLD = Number(process.env.MEETING_SILENCE_RMS_THRESHOLD || 0.01);
+  const SILENCE_FLUSH_MS = Number(process.env.MEETING_SILENCE_FLUSH_MS || 900);
+  let meetingAudioIdleTimer = null;
+  let meetingSpeechActive = false;
+  let meetingSilenceMs = 0;
 
   // Real-time playback pacer for Gemini -> MeetingBaaS
   let playbackQueue = Buffer.alloc(0);
   let playbackTimer = null;
   let lastForwardedToMeetingAt = 0;
   const FEEDBACK_SUPPRESSION_MS = 1500;
+
+  function scheduleMeetingAudioTurnFlush() {
+    if (meetingAudioIdleTimer) clearTimeout(meetingAudioIdleTimer);
+    meetingAudioIdleTimer = setTimeout(() => {
+      meetingAudioIdleTimer = null;
+      if (!geminiSessionPromise) return;
+      geminiSessionPromise
+        .then((session) => {
+          try {
+            session.sendRealtimeInput({ audioStreamEnd: true });
+            console.log('Sent audioStreamEnd after meeting audio pause');
+          } catch (err) {
+            console.error('audioStreamEnd error (sync):', err);
+          }
+        })
+        .catch((err) => {
+          console.error('audioStreamEnd error:', err);
+        });
+    }, MEETING_AUDIO_PAUSE_MS);
+  }
 
   function startPlaybackRoutine() {
     if (playbackTimer) return;
@@ -408,9 +458,34 @@ wssOut.on('connection', (ws) => {
       });
   };
 
+  // Connect immediately so the bot can speak first without waiting for meeting audio.
+  ensureGeminiConnected().catch((err) => {
+    console.error('Initial Gemini connect error:', err);
+  });
+
   ws.on('message', (data) => {
     try {
       if (Buffer.isBuffer(data)) {
+        if (Date.now() - lastForwardedToMeetingAt < FEEDBACK_SUPPRESSION_MS) {
+          return;
+        }
+        const rms = getPcm16Rms(data);
+        const chunkDurationMs = Math.round((data.length / 2 / 16000) * 1000);
+        if (rms >= SILENCE_RMS_THRESHOLD) {
+          if (!meetingSpeechActive) {
+            console.log('Detected meeting speech, rms=', rms.toFixed(4), 'bytes=', data.length);
+          }
+          meetingSpeechActive = true;
+          meetingSilenceMs = 0;
+        } else if (meetingSpeechActive) {
+          meetingSilenceMs += chunkDurationMs;
+          if (meetingSilenceMs >= SILENCE_FLUSH_MS) {
+            console.log('Detected end of meeting speech after silence ms=', meetingSilenceMs);
+            scheduleMeetingAudioTurnFlush();
+            meetingSpeechActive = false;
+            meetingSilenceMs = 0;
+          }
+        }
         pendingToGeminiBuffers.push(data);
         pendingToGeminiBytes += data.length;
         if (!pendingToGeminiTimer) {
@@ -426,12 +501,19 @@ wssOut.on('connection', (ws) => {
 
   ws.on('close', () => {
     try {
+      geminiSession?.sendRealtimeInput?.({ audioStreamEnd: true });
+    } catch (e) {}
+    try {
       geminiSession?.close?.();
     } catch (e) {}
     if (pendingToGeminiTimer) clearTimeout(pendingToGeminiTimer);
+    if (meetingAudioIdleTimer) clearTimeout(meetingAudioIdleTimer);
     if (playbackTimer) clearInterval(playbackTimer);
     playbackTimer = null;
     pendingToGeminiTimer = null;
+    meetingAudioIdleTimer = null;
+    meetingSpeechActive = false;
+    meetingSilenceMs = 0;
     pendingToGeminiBuffers = [];
     pendingToGeminiBytes = 0;
     playbackQueue = Buffer.alloc(0);
