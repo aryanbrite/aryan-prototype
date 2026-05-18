@@ -92,6 +92,15 @@ function getPcm16Rms(buffer) {
   return Math.sqrt(sumSquares / sampleCount);
 }
 
+function previewWsMessage(data, maxLen = 200) {
+  try {
+    const text = Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
+    return text.length > maxLen ? `${text.slice(0, maxLen)}...` : text;
+  } catch (e) {
+    return '[unprintable message]';
+  }
+}
+
 let activeInputWs = null;
 
 // Endpoint for bot joining
@@ -463,36 +472,46 @@ wssOut.on('connection', (ws) => {
     console.error('Initial Gemini connect error:', err);
   });
 
-  ws.on('message', (data) => {
+  ws.on('message', (data, isBinary) => {
     try {
-      if (Buffer.isBuffer(data)) {
-        if (Date.now() - lastForwardedToMeetingAt < FEEDBACK_SUPPRESSION_MS) {
-          return;
+      if (!isBinary) {
+        console.log('Received non-binary /audio-out message:', previewWsMessage(data));
+        return;
+      }
+
+      const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      if (chunk.length === 0) return;
+      if (chunk.length % 2 !== 0) {
+        console.log('Ignoring odd-length binary /audio-out payload bytes=', chunk.length);
+        return;
+      }
+
+      if (Date.now() - lastForwardedToMeetingAt < FEEDBACK_SUPPRESSION_MS) {
+        return;
+      }
+
+      const rms = getPcm16Rms(chunk);
+      const chunkDurationMs = Math.round((chunk.length / 2 / 16000) * 1000);
+      if (rms >= SILENCE_RMS_THRESHOLD) {
+        if (!meetingSpeechActive) {
+          console.log('Detected meeting speech, rms=', rms.toFixed(4), 'bytes=', chunk.length);
         }
-        const rms = getPcm16Rms(data);
-        const chunkDurationMs = Math.round((data.length / 2 / 16000) * 1000);
-        if (rms >= SILENCE_RMS_THRESHOLD) {
-          if (!meetingSpeechActive) {
-            console.log('Detected meeting speech, rms=', rms.toFixed(4), 'bytes=', data.length);
-          }
-          meetingSpeechActive = true;
+        meetingSpeechActive = true;
+        meetingSilenceMs = 0;
+      } else if (meetingSpeechActive) {
+        meetingSilenceMs += chunkDurationMs;
+        if (meetingSilenceMs >= SILENCE_FLUSH_MS) {
+          console.log('Detected end of meeting speech after silence ms=', meetingSilenceMs);
+          scheduleMeetingAudioTurnFlush();
+          meetingSpeechActive = false;
           meetingSilenceMs = 0;
-        } else if (meetingSpeechActive) {
-          meetingSilenceMs += chunkDurationMs;
-          if (meetingSilenceMs >= SILENCE_FLUSH_MS) {
-            console.log('Detected end of meeting speech after silence ms=', meetingSilenceMs);
-            scheduleMeetingAudioTurnFlush();
-            meetingSpeechActive = false;
-            meetingSilenceMs = 0;
-          }
         }
-        pendingToGeminiBuffers.push(data);
-        pendingToGeminiBytes += data.length;
-        if (!pendingToGeminiTimer) {
-          pendingToGeminiTimer = setTimeout(flushPendingToGemini, CHUNK_INTERVAL_MS);
-        }
-      } else {
-        console.log('Received non-buffer message on /audio-out, type=', typeof data);
+      }
+
+      pendingToGeminiBuffers.push(chunk);
+      pendingToGeminiBytes += chunk.length;
+      if (!pendingToGeminiTimer) {
+        pendingToGeminiTimer = setTimeout(flushPendingToGemini, CHUNK_INTERVAL_MS);
       }
     } catch (err) {
       console.error('Error handling /audio-out message:', err);
