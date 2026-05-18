@@ -238,7 +238,6 @@ wssOut.on('connection', (ws) => {
     },
     inputAudioTranscription: {},
     outputAudioTranscription: {},
-    explicitVadSignal: true,
     realtimeInputConfig: {
       automaticActivityDetection: {
         disabled: true
@@ -371,6 +370,9 @@ wssOut.on('connection', (ws) => {
       })
       .catch((err) => {
         console.error('Gemini connect error:', err);
+        geminiSession = null;
+        geminiSessionPromise = null;
+        hasSentKickoff = false;
       });
 
     return geminiSessionPromise;
