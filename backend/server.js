@@ -102,6 +102,7 @@ function previewWsMessage(data, maxLen = 200) {
 }
 
 let activeInputWs = null;
+let warnedMissingInputWs = false;
 
 // Endpoint for bot joining
 app.post('/api/join', async (req, res) => {
@@ -192,6 +193,7 @@ app.post('/api/join', async (req, res) => {
 wssIn.on('connection', (ws) => {
   console.log("Meeting BaaS connected to /audio-in (streaming.input) — Ready to speak");
   activeInputWs = ws;
+  warnedMissingInputWs = false;
   // If we had buffered model audio while no /audio-in was connected, flush it now.
   try { flushPendingModelAudioToMeeting(ws); } catch (e) {}
   ws.on('close', () => {
@@ -326,6 +328,10 @@ wssOut.on('connection', (ws) => {
                 playbackQueue = Buffer.concat([playbackQueue, outBuf]);
                 startPlaybackRoutine();
               } else {
+                if (!warnedMissingInputWs) {
+                  warnedMissingInputWs = true;
+                  console.warn('Gemini produced audio but no active /audio-in websocket is connected. MeetingBaaS cannot play bot speech yet.');
+                }
                 // Buffer model audio when there is no /audio-in connected so we can
                 // forward it once a client connects. Cap buffer size to avoid OOM.
                 if (pendingModelAudioBytes + outBuf.length > MAX_PENDING_MEETING_BYTES) {
