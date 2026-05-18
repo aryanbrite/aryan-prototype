@@ -212,6 +212,9 @@ wssOut.on('connection', (ws) => {
   const MODEL = "gemini-3.1-flash-live-preview";
   const CONFIG = {
     responseModalities: [Modality.AUDIO],
+    thinkingConfig: {
+      thinkingLevel: 'minimal'
+    },
     speechConfig: {
       voiceConfig: {
         prebuiltVoiceConfig: { voiceName: "zubenelgenubi" }
