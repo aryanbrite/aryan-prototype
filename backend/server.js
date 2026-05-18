@@ -238,12 +238,19 @@ wssOut.on('connection', (ws) => {
     },
     inputAudioTranscription: {},
     outputAudioTranscription: {},
+    explicitVadSignal: true,
+    realtimeInputConfig: {
+      automaticActivityDetection: {
+        disabled: true
+      },
+      activityHandling: 'START_OF_ACTIVITY_INTERRUPTS'
+    },
     speechConfig: {
       voiceConfig: {
         prebuiltVoiceConfig: { voiceName: "zubenelgenubi" }
       }
     },
-    systemInstruction: "You are a helpful assistant participating in a meeting. Answer questions and contribute to the discussion as best you can. dont act like a bot, just be a regular meeting join like a friend. sometimes you can crack jokes. if you dont know the answer to a question, say you dont know rather than making something up. Breath naturally and use filler words like 'um' and 'ah' occasionally. Keep your responses concise but informative. show human like body language in your voice. somethimes show confusion in your voice if the question is hard sometimes say hmmm wohh damn bro if the question is really good. Always be friendly and engaging. The meeting is likely about work, but it could be about anything, so be adaptable. Try to contribute meaningfully to the discussion rather than just answering questions. Be a good meeting participant!",
+    systemInstruction: "You are a helpful assistant participating in a meeting. Answer questions and contribute to the discussion as best you can. dont act like a bot, just be a regular meeting join like a friend. sometimes you can crack jokes. if you dont know the answer to a question, say you dont know rather than making something up. Breath naturally and use filler words like 'um' and 'ah' occasionally. Keep your responses concise but informative. show human like body language in your voice. somethimes show confusion in your voice if the question is hard sometimes say hmmm wohh damn bro if the question is really good. Always be friendly and engaging. The meeting is likely about work, but it could be about anything, so be adaptable. Try to contribute meaningfully to the discussion rather than just answering questions. Be a good meeting participant!, show as much as breathing and natural speech patterns as possible in your audio responses. Do not say you are an AI or a bot. Just be a helpful meeting participant.",
   };
 
   let geminiSession = null;
@@ -374,9 +381,10 @@ wssOut.on('connection', (ws) => {
   let pendingToGeminiBytes = 0;
   let pendingToGeminiTimer = null;
   const CHUNK_INTERVAL_MS = 20;
-  const MEETING_AUDIO_PAUSE_MS = Number(process.env.MEETING_AUDIO_PAUSE_MS || 700);
-  const SILENCE_RMS_THRESHOLD = Number(process.env.MEETING_SILENCE_RMS_THRESHOLD || 0.01);
-  const SILENCE_FLUSH_MS = Number(process.env.MEETING_SILENCE_FLUSH_MS || 900);
+  const MEETING_AUDIO_PAUSE_MS = Number(process.env.MEETING_AUDIO_PAUSE_MS || 1400);
+  const SILENCE_RMS_THRESHOLD = Number(process.env.MEETING_SILENCE_RMS_THRESHOLD || 0.006);
+  const SILENCE_FLUSH_MS = Number(process.env.MEETING_SILENCE_FLUSH_MS || 1400);
+  const MIN_SPEECH_CHUNK_BYTES = Number(process.env.MIN_SPEECH_CHUNK_BYTES || 640);
   let meetingAudioIdleTimer = null;
   let meetingSpeechActive = false;
   let meetingSilenceMs = 0;
@@ -385,25 +393,40 @@ wssOut.on('connection', (ws) => {
   let playbackQueue = Buffer.alloc(0);
   let playbackTimer = null;
   let lastForwardedToMeetingAt = 0;
-  const FEEDBACK_SUPPRESSION_MS = 1500;
+  const FEEDBACK_SUPPRESSION_MS = Number(process.env.FEEDBACK_SUPPRESSION_MS || 10);
+
+  function sendGeminiRealtimeSignal(params, label) {
+    if (!geminiSessionPromise) return;
+    geminiSessionPromise
+      .then((session) => {
+        try {
+          session.sendRealtimeInput(params);
+          console.log(label);
+        } catch (err) {
+          console.error(`${label} error (sync):`, err);
+        }
+      })
+      .catch((err) => {
+        console.error(`${label} error:`, err);
+      });
+  }
+
+  function endMeetingSpeech(reason) {
+    if (!meetingSpeechActive) return;
+    meetingSpeechActive = false;
+    meetingSilenceMs = 0;
+    if (meetingAudioIdleTimer) {
+      clearTimeout(meetingAudioIdleTimer);
+      meetingAudioIdleTimer = null;
+    }
+    sendGeminiRealtimeSignal({ activityEnd: {} }, `Sent activityEnd after ${reason}`);
+  }
 
   function scheduleMeetingAudioTurnFlush() {
     if (meetingAudioIdleTimer) clearTimeout(meetingAudioIdleTimer);
     meetingAudioIdleTimer = setTimeout(() => {
       meetingAudioIdleTimer = null;
-      if (!geminiSessionPromise) return;
-      geminiSessionPromise
-        .then((session) => {
-          try {
-            session.sendRealtimeInput({ audioStreamEnd: true });
-            console.log('Sent audioStreamEnd after meeting audio pause');
-          } catch (err) {
-            console.error('audioStreamEnd error (sync):', err);
-          }
-        })
-        .catch((err) => {
-          console.error('audioStreamEnd error:', err);
-        });
+      endMeetingSpeech('meeting audio pause');
     }, MEETING_AUDIO_PAUSE_MS);
   }
 
@@ -492,8 +515,15 @@ wssOut.on('connection', (ws) => {
 
       const rms = getPcm16Rms(chunk);
       const chunkDurationMs = Math.round((chunk.length / 2 / 16000) * 1000);
-      if (rms >= SILENCE_RMS_THRESHOLD) {
+      const qualifiesAsSpeech = chunk.length >= MIN_SPEECH_CHUNK_BYTES && rms >= SILENCE_RMS_THRESHOLD;
+
+      if (qualifiesAsSpeech) {
         if (!meetingSpeechActive) {
+          if (playbackQueue.length > 0) {
+            playbackQueue = Buffer.alloc(0);
+            console.log('Locally interrupted bot playback due to detected user speech');
+          }
+          sendGeminiRealtimeSignal({ activityStart: {} }, 'Sent activityStart for meeting speech');
           console.log('Detected meeting speech, rms=', rms.toFixed(4), 'bytes=', chunk.length);
         }
         meetingSpeechActive = true;
@@ -502,9 +532,7 @@ wssOut.on('connection', (ws) => {
         meetingSilenceMs += chunkDurationMs;
         if (meetingSilenceMs >= SILENCE_FLUSH_MS) {
           console.log('Detected end of meeting speech after silence ms=', meetingSilenceMs);
-          scheduleMeetingAudioTurnFlush();
-          meetingSpeechActive = false;
-          meetingSilenceMs = 0;
+          endMeetingSpeech(`silence ms=${meetingSilenceMs}`);
         }
       }
 
@@ -513,6 +541,9 @@ wssOut.on('connection', (ws) => {
       if (!pendingToGeminiTimer) {
         pendingToGeminiTimer = setTimeout(flushPendingToGemini, CHUNK_INTERVAL_MS);
       }
+      if (meetingSpeechActive) {
+        scheduleMeetingAudioTurnFlush();
+      }
     } catch (err) {
       console.error('Error handling /audio-out message:', err);
     }
@@ -520,7 +551,9 @@ wssOut.on('connection', (ws) => {
 
   ws.on('close', () => {
     try {
-      geminiSession?.sendRealtimeInput?.({ audioStreamEnd: true });
+      if (meetingSpeechActive) {
+        geminiSession?.sendRealtimeInput?.({ activityEnd: {} });
+      }
     } catch (e) {}
     try {
       geminiSession?.close?.();
