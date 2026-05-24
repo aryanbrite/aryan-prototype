@@ -1,217 +1,283 @@
 # Meeting Bot API
 
-**Base URL:** `https://api.deyweaver.live`
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
+[![Tests](https://github.com/aryanbrite/aryan-prototype/actions/workflows/ci.yml/badge.svg)](https://github.com/aryanbrite/aryan-prototype/actions/workflows/ci.yml)
 
 Send a bot into any Google Meet, Zoom, or Teams meeting to capture audio and process it with Gemini in real time.  
 This API handles all WebSocket connections and AI processing – your frontend only needs to call one endpoint.
 
----
+## Features
 
-## Authentication
+- ✅ Join Google Meet, Zoom, and Microsoft Teams meetings
+- 🤖 AI-powered bot using Google Gemini for real-time interaction
+- 🔒 Secure implementation with input validation, sanitization, and rate limiting
+- 📦 Docker support for easy deployment
+- 🧪 Comprehensive test suite
+- 📖 Detailed API documentation
+- 🛡️ Security best practices implemented
+- 📚 OSS-friendly with contributing guidelines and code of conduct
 
-No authentication is required from the frontend.  
-All necessary API keys (`MeetingBaas`, `Gemini`) are stored securely on the server.
+## Table of Contents
 
----
+- [Installation](#installation)
+- [Usage](#usage)
+- [API Documentation](#api-documentation)
+- [Deployment](#deployment)
+- [Development](#development)
+- [Testing](#testing)
+- [Contributing](#contributing)
+- [License](#license)
+- [Security](#security)
 
-## Endpoint
+## Installation
 
-### `POST /api/join`
+### Prerequisites
 
-Sends a bot into a meeting. The bot will:
-- Join the meeting using the provided URL.
-- Capture the speaker’s audio.
-- Stream the audio to Gemini for real‑time transcription and analysis.
-- Automatically leave when the meeting ends (or after a timeout in the waiting room).
+- Node.js >= 18.0.0
+- npm or yarn
+- Meeting BaaS API key
+- Gemini API key
 
-#### Request
+### Backend Setup
 
-- **Method:** `POST`
-- **Content-Type:** `application/json`
+```bash
+# Clone the repository
+git clone https://github.com/aryanbrite/aryan-prototype.git
+cd aryan-prototype/backend
 
-**Body parameters:**
+# Install dependencies
+npm install
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `meeting_url` | string | Yes | Full URL of the meeting (e.g., `https://meet.google.com/abc-defg-hij`) |
+# Create .env file
+cp .env.example .env
+# Edit .env with your API keys
+```
 
-**Example:**
+### Frontend Setup
 
+```bash
+cd ../frontend
+npm install
+
+# Create .env.local
+cp .env.example .env.local
+# Edit .env.local with your configuration
+```
+
+## Usage
+
+### Development Mode
+
+```bash
+# Start backend
+cd backend
+npm run dev
+
+# Start frontend (in another terminal)
+cd frontend
+npm run dev
+```
+
+### Production Mode with Docker
+
+```bash
+# Build and start all services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+```
+
+### Manual Production Start
+
+```bash
+# Build backend
+cd backend
+npm run build
+npm start
+
+# Build frontend
+cd frontend
+npm run build
+npm start
+```
+
+## API Documentation
+
+### Base URL
+
+By default, the backend runs on `http://localhost:8000`
+
+### Health Check
+
+- `GET /` - Basic health check
+- `GET /health` - Detailed health check with uptime and memory usage
+- `GET /health/detailed` - Extended health check with dependency versions
+
+### Main Endpoint
+
+#### `POST /api/join`
+
+Sends a bot into a meeting.
+
+**Request Body:**
 ```json
 {
   "meeting_url": "https://meet.google.com/abc-defg-hij"
 }
 ```
 
-#### Success Response
+**Supported Platforms:**
+- Google Meet: `https://meet.google.com/*`
+- Zoom: `https://zoom.us/j/*` or `https://*.zoom.us/*`
+- Microsoft Teams: `https://teams.microsoft.com/*`
 
-- **Status:** `200 OK`
-- **Body:**
-
+**Success Response:**
 ```json
 {
   "status": "success",
-  "bot_id": "unique-bot-identifier"
+  "bot_id": "unique-bot-identifier",
+  "requestId": "uuid",
+  "timestamp": "ISO timestamp"
 }
 ```
 
-The `bot_id` can be used later to query the bot’s status (if such a route becomes available).
+**Error Responses:**
+- `400 Bad Request` - Invalid or missing meeting_url
+- `500 Internal Server Error` - Server misconfiguration or service failure
 
-#### Error Responses
+### Environment Variables
 
-- **400 Bad Request** – `meeting_url` is missing.
+Backend (`.env`):
+```
+# Required
+MEETING_BAAS_API_KEY=your_meeting_baas_key
+GEMINI_API_KEY=your_gemini_key
 
-```json
-{
-  "error": "meeting_url is required"
-}
+# Optional
+MEETING_BAAS_API_URL=https://api.meetingbaas.com/v2/bots
+MEETING_BAAS_API_VERSION=v2
+MEETING_BAAS_AUTH_HEADER=x-meeting-baas-api-key
+PUBLIC_URL=http://localhost:8000
+CORS_ORIGIN=http://localhost:3000
+PORT=8000
+NODE_ENV=development
 ```
 
-- **500 Internal Server Error** – Server misconfiguration (e.g., missing API keys) or MeetingBaas/Gemini service failure.
-
-```json
-{
-  "status": "error",
-  "message": "MEETING_BAAS_API_KEY not set"
-}
+Frontend (`.env.local`):
+```
+NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
 ```
 
----
+## Deployment
 
-## Integration Examples
+### Docker Compose
 
-### 1. Next.js / React (TypeScript)
-
-Add the backend URL to your environment variables:
-
-```env
-# .env.local
-NEXT_PUBLIC_API_URL=https://api.deyweaver.live
-```
-
-Then use this component anywhere in your app:
-
-```tsx
-'use client';
-import { useState } from 'react';
-
-export default function MeetingBot() {
-  const [meetingUrl, setMeetingUrl] = useState('');
-  const [result, setResult] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const handleJoin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setResult('Sending bot to meeting...');
-
-    try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/join`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ meeting_url: meetingUrl }),
-      });
-
-      const data = await res.json();
-
-      if (data.status === 'success') {
-        setResult(`Bot joined! ID: ${data.bot_id}`);
-      } else {
-        setResult(`Error: ${data.message || JSON.stringify(data)}`);
-      }
-    } catch (err) {
-      setResult(`Network error: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <form onSubmit={handleJoin}>
-      <input
-        type="text"
-        value={meetingUrl}
-        onChange={(e) => setMeetingUrl(e.target.value)}
-        placeholder="Paste Google Meet link"
-        required
-      />
-      <button type="submit" disabled={loading}>
-        {loading ? 'Joining...' : 'Send Bot'}
-      </button>
-      {result && <p>{result}</p>}
-    </form>
-  );
-}
-```
-
-### 2. Vanilla HTML / JavaScript
-
-```html
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Meeting Bot</title>
-</head>
-<body>
-  <h1>Join Meeting with Bot</h1>
-  <form id="botForm">
-    <input type="text" id="meetingUrl" placeholder="https://meet.google.com/abc-defg-hij" required>
-    <button type="submit">Send Bot</button>
-  </form>
-  <p id="result"></p>
-
-  <script>
-    const API_URL = 'https://api.deyweaver.live';
-    const form = document.getElementById('botForm');
-    const resultEl = document.getElementById('result');
-
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const meetingUrl = document.getElementById('meetingUrl').value;
-      resultEl.textContent = 'Sending bot...';
-
-      try {
-        const res = await fetch(`${API_URL}/api/join`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ meeting_url: meetingUrl }),
-        });
-        const data = await res.json();
-        if (data.status === 'success') {
-          resultEl.textContent = `Bot joined! ID: ${data.bot_id}`;
-        } else {
-          resultEl.textContent = `Error: ${data.message || JSON.stringify(data)}`;
-        }
-      } catch (err) {
-        resultEl.textContent = `Network error: ${err.message}`;
-      }
-    });
-  </script>
-</body>
-</html>
-```
-
-### 3. cURL (command line)
+The project includes a `docker-compose.yml` for easy deployment:
 
 ```bash
-curl -X POST https://api.deyweaver.live/api/join \
-  -H "Content-Type: application/json" \
-  -d '{"meeting_url": "https://meet.google.com/abc-defg-hij"}'
+docker-compose up -d
 ```
 
+This will start:
+- Backend API on port 8000
+- Frontend on port 3000
+
+### Manual Deployment
+
+#### Backend
+```bash
+# Build (if needed)
+npm run build
+
+# Start
+NODE_ENV=production npm start
+```
+
+#### Frontend
+```bash
+# Build
+npm run build
+
+# Start
+NODE_ENV=production npm start
+```
+
+## Development
+
+### Code Style
+
+We use ESLint for code quality. Run linting with:
+
+```bash
+# Backend
+cd backend
+npm run lint
+
+# Frontend
+cd frontend
+npm run lint
+```
+
+### Adding Features
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes
+4. Add or update tests
+5. Ensure all tests pass
+6. Commit and push
+7. Open a Pull Request
+
+## Testing
+
+### Backend Tests
+
+```bash
+cd backend
+npm test
+```
+
+### Frontend Tests
+
+```bash
+cd frontend
+npm test
+```
+
+### Test Coverage
+
+To view coverage reports:
+
+```bash
+# Backend
+cd backend
+npm test -- --coverage
+
+# Frontend
+cd frontend
+npm test -- --coverage
+```
+
+## Contributing
+
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
+
+## Security
+
+Please read [SECURITY.md](SECURITY.md) for our security policy and how to report vulnerabilities.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- [Meeting BaaS](https://www.meetingbaas.com/) for meeting automation
+- [Google Gemini](https://ai.google.dev/) for AI capabilities
+- All contributors who have helped shape this project
+
 ---
 
-## Notes
-
-- **CORS:** The server allows requests from any origin (`*`), so browser‑based calls work without issues.
-- **Rate Limiting:** Currently none, but please use responsibly. Contact us if you plan high‑volume usage.
-- **Bot Behavior:** The bot appears in the meeting as a participant, records the speaker’s audio, and streams it to Gemini. The audio is processed in near‑real time, but the final transcription / summary may be available later via a future status endpoint.
-- **Supported Platforms:** Google Meet, Zoom, Microsoft Teams (URL must be accessible to the bot; password‑protected meetings might require additional configuration – contact us for help).
-
----
-
-## Support
-
-For issues, feature requests, or to obtain API keys for self‑hosted deployments, open an issue on our GitHub repository:  
-[https://github.com/aryanbrite/aryan-prototype](https://github.com/aryanbrite/aryan-prototype)
+Made with ❤️ by Aryan Brite

@@ -4,10 +4,84 @@ const cors = require('cors');
 const { createServer } = require('http');
 const WebSocket = require('ws');
 const { GoogleGenAI, Modality } = require('@google/genai');
+const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
+const xss = require('xss-clean');
+const mongoSanitize = require('express-mongo-sanitize');
+const hpp = require('hpp');
+const { v4: uuidv4 } = require('uuid');
+const winston = require('winston');
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+
+// Security middleware
+app.use(helmet());
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || '*',
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type']
+}));
+app.use(xss());
+app.use(mongoSanitize());
+app.use(hpp());
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { status: 'error', message: 'Too many requests, please try again later.' }
+});
+app.use('/api/', limiter);
+
+// Body parser
+app.use(express.json({ limit: '10kb' }));
+app.use(express.urlencoded({ extended: true, limit: '10kb' }));
+
+// Logging setup
+const logger = winston.createLogger({
+  level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.errors({ stack: true }),
+    winston.format.splat(),
+    winston.format.json()
+  ),
+  defaultMeta: { service: 'meeting-bot-backend' },
+  transports: [
+    new winston.transports.Console({
+      format: winston.format.combine(
+        winston.format.colorize(),
+        winston.format.simple()
+      )
+    })
+  ]
+});
+
+// Add request logging middleware
+app.use((req, res, next) => {
+  logger.info('Incoming request', {
+    method: req.method,
+    url: req.url,
+    ip: req.ip || req.connection.remoteAddress,
+    userAgent: req.get('User-Agent')
+  });
+
+  // Log response completion
+  const originalSend = res.send;
+  res.send = function(body) {
+    logger.info('Outgoing response', {
+      method: req.method,
+      url: req.url,
+      statusCode: res.statusCode,
+      responseLength: Buffer.isBuffer(body) ? body.length : Buffer.byteLength(String(body || ''))
+    });
+    return originalSend.call(this, body);
+  };
+
+  next();
+});
 
 const PUBLIC_URL = process.env.PUBLIC_URL || 'https://your-domain.com';
 const wss_url = PUBLIC_URL.replace("https://", "wss://").replace("http://", "ws://");
@@ -25,7 +99,26 @@ app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
     service: 'meeting-bot-backend',
-    public_url: PUBLIC_URL
+    public_url: PUBLIC_URL,
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
+
+// Detailed health check endpoint
+app.get('/health/detailed', (_req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'meeting-bot-backend',
+    version: '1.0.0',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    memoryUsage: process.memoryUsage(),
+    environment: process.env.NODE_ENV || 'development',
+    dependencies: {
+      express: require('express/package.json').version,
+      'ws': require('ws/package.json').version
+    }
   });
 });
 
@@ -106,9 +199,50 @@ let warnedMissingInputWs = false;
 
 // Endpoint for bot joining
 app.post('/api/join', async (req, res) => {
+  const requestId = uuidv4();
+  logger.info('Join request received', { requestId, ip: req.ip });
+
+  // Input validation
   const { meeting_url } = req.body;
-  if (!meeting_url) {
-    return res.status(400).json({ error: 'meeting_url is required' });
+
+  if (!meeting_url || typeof meeting_url !== 'string') {
+    logger.warn('Invalid meeting_url provided', { requestId, meeting_url });
+    return res.status(400).json({
+      status: 'error',
+      message: 'meeting_url is required and must be a string'
+    });
+  }
+
+  // Basic URL validation
+  const urlPattern = new RegExp('^(https?:\\/\\/)?' + // protocol
+    '((([a-z\\d]([a-z\\d-]*[a-z\\d])*)\\.)+[a-z]{2,}|' + // domain name
+    '((\\d{1,3}\\.){3}\\d{1,3}))' + // OR ip (v4) address
+    '(\\:\\d+)?(\\/[-a-z\\d%_.~+]*)*' + // port and path
+    '(\\?[;&a-z\\d%_.~+=-]*)?' + // query string
+    '(\\#[-a-z\\d_]*)?$', 'i'); // fragment locator
+
+  if (!urlPattern.test(meeting_url)) {
+    logger.warn('Invalid meeting URL format', { requestId, meeting_url });
+    return res.status(400).json({
+      status: 'error',
+      message: 'Invalid meeting URL format'
+    });
+  }
+
+  // Additional validation for supported platforms
+  const supportedPatterns = [
+    /meet\.google\.com/, // Google Meet
+    /zoom\.us\/j\//,     // Zoom
+    /teams\.microsoft\.com\// // Microsoft Teams
+  ];
+
+  const isSupported = supportedPatterns.some(pattern => pattern.test(meeting_url));
+  if (!isSupported) {
+    logger.warn('Unsupported meeting platform', { requestId, meeting_url });
+    return res.status(400).json({
+      status: 'error',
+      message: 'Unsupported meeting platform. Supported: Google Meet, Zoom, Microsoft Teams'
+    });
   }
 
   const payload = {
@@ -145,6 +279,7 @@ app.post('/api/join', async (req, res) => {
 
     if (process.env.MEETING_BAAS_API_VERSION === 'v2') {
       if (!meetingBaasKey) {
+        logger.error('MEETING_BAAS_API_KEY not configured', { requestId });
         return res
           .status(500)
           .json({ status: 'error', message: 'MEETING_BAAS_API_KEY (v2) not set' });
@@ -153,6 +288,7 @@ app.post('/api/join', async (req, res) => {
       headers[authHeader] = meetingBaasKey;
     } else {
       if (!meetingBaasKey) {
+        logger.error('MEETING_BAAS_API_KEY not configured', { requestId });
         return res
           .status(500)
           .json({ status: 'error', message: 'MEETING_BAAS_API_KEY not set' });
@@ -161,7 +297,11 @@ app.post('/api/join', async (req, res) => {
       headers[authHeader] = meetingBaasKey;
     }
 
-    console.log('MeetingBaaS call:', meetingBaasApiUrl, 'version=', process.env.MEETING_BAAS_API_VERSION || 'v1', 'headers=', Object.keys(headers), 'keyPresent=', !!meetingBaasKey);
+    logger.info('Calling MeetingBaaS API', {
+      requestId,
+      url: meetingBaasApiUrl,
+      version: process.env.MEETING_BAAS_API_VERSION || 'v1'
+    });
 
     const response = await fetch(meetingBaasApiUrl, {
       method: 'POST',
@@ -179,14 +319,34 @@ app.post('/api/join', async (req, res) => {
 
     if (response.ok) {
       const botId = data.data?.bot_id || data.bot_id || data.id || data.botId || null;
-      res.json({ status: 'success', bot_id: botId, raw: data });
+      logger.info('Bot joined successfully', { requestId, botId });
+      res.json({
+        status: 'success',
+        bot_id: botId,
+        requestId,
+        timestamp: new Date().toISOString()
+      });
     } else {
-      console.error('MeetingBaaS error', response.status, data);
-      res.status(response.status).json({ status: 'error', message: data });
+      logger.error('MeetingBaaS API error', {
+        requestId,
+        status: response.status,
+        data
+      });
+      res.status(response.status).json({
+        status: 'error',
+        message: data,
+        requestId,
+        timestamp: new Date().toISOString()
+      });
     }
   } catch (err) {
-    console.error('Join error:', err);
-    res.status(500).json({ status: 'error', message: err.message });
+    logger.error('Join error', { requestId, error: err.message });
+    res.status(500).json({
+      status: 'error',
+      message: err.message,
+      requestId,
+      timestamp: new Date().toISOString()
+    });
   }
 });
 
