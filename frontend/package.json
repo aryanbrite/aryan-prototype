@@ -1,7 +1,7 @@
 {
   "name": "frontend",
   "version": "0.1.0",
-  "description": "Meeting Bot Frontend - React/Next.js interface for joining meetings with AI-powered bot",
+  "description": "Cucumbu Meeting Bot Frontend - React/Next.js interface for joining meetings with AI-powered workspace assistant",
   "private": false,
   "scripts": {
     "dev": "next dev",
@@ -13,13 +13,16 @@
     "type-check": "tsc --noEmit"
   },
   "keywords": [
+    "cucumbu",
     "meeting-bot",
+    "workspace-assistant",
     "google-meet",
     "zoom",
     "microsoft-teams",
     "react",
     "nextjs",
-    "typescript"
+    "typescript",
+    "ai"
   ],
   "author": "Aryan Brite <aryan@example.com>",
   "license": "MIT",

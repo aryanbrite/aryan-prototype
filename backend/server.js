@@ -59,6 +59,9 @@ const logger = winston.createLogger({
   ]
 });
 
+// In-memory storage for active bots
+const activeBots = new Map();
+
 // Add request logging middleware
 app.use((req, res, next) => {
   logger.info('Incoming request', {
@@ -319,6 +322,26 @@ app.post('/api/join', async (req, res) => {
 
     if (response.ok) {
       const botId = data.data?.bot_id || data.bot_id || data.id || data.botId || null;
+
+      // Store active bot in memory
+      if (botId) {
+        activeBots.set(botId, {
+          meeting_url,
+          joined_at: new Date().toISOString(),
+          status: 'active',
+          requestId
+        });
+
+        // Clean up old bots (older than 24 hours)
+        const now = new Date();
+        for (const [id, bot] of activeBots.entries()) {
+          const joinedAt = new Date(bot.joined_at);
+          if (now - joinedAt > 24 * 60 * 60 * 1000) { // 24 hours
+            activeBots.delete(id);
+          }
+        }
+      }
+
       logger.info('Bot joined successfully', { requestId, botId });
       res.json({
         status: 'success',
@@ -348,6 +371,94 @@ app.post('/api/join', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   }
+});
+
+// Bot status endpoint
+app.get('/api/bot-status/:botId', (req, res) => {
+  const { botId } = req.params;
+
+  if (!botId) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'botId is required'
+    });
+  }
+
+  const bot = activeBots.get(botId);
+
+  if (!bot) {
+    return res.status(404).json({
+      status: 'error',
+      message: 'Bot not found or expired'
+    });
+  }
+
+  res.json({
+    status: 'success',
+    bot: {
+      bot_id: botId,
+      meeting_url: bot.meeting_url,
+      joined_at: bot.joined_at,
+      status: bot.status,
+      duration: calculateDuration(bot.joined_at)
+    }
+  });
+});
+
+// Helper function to calculate duration
+function calculateDuration(startTime) {
+  const start = new Date(startTime);
+  const end = new Date();
+  const diffMs = end - start;
+
+  const hours = Math.floor(diffMs / (1000 * 60 * 60));
+  const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+  const seconds = Math.floor((diffMs % (1000 * 60)) / 1000);
+
+  return {
+    hours,
+    minutes,
+    seconds,
+    totalSeconds: Math.floor(diffMs / 1000)
+  };
+}
+
+// List active bots endpoint (for admin/debugging)
+app.get('/api/bots', (_req, res) => {
+  const bots = Array.from(activeBots.entries()).map(([botId, bot]) => ({
+    bot_id: botId,
+    meeting_url: bot.meeting_url,
+    joined_at: bot.joined_at,
+    status: bot.status,
+    duration: calculateDuration(bot.joined_at)
+  }));
+
+  res.json({
+    status: 'success',
+    count: bots.length,
+    bots
+  });
+});
+
+// Cleanup endpoint (for testing)
+app.delete('/api/bot-status/:botId', (req, res) => {
+  const { botId } = req.params;
+
+  if (!botId) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'botId is required'
+    });
+  }
+
+  const existed = activeBots.has(botId);
+  activeBots.delete(botId);
+
+  res.json({
+    status: 'success',
+    message: existed ? 'Bot removed' : 'Bot not found',
+    removed: existed
+  });
 });
 
 wssIn.on('connection', (ws) => {

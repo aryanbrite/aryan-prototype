@@ -1,22 +1,22 @@
-# Meeting Bot API
+# Cucumbu Meeting API
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
 [![Tests](https://github.com/aryanbrite/aryan-prototype/actions/workflows/ci.yml/badge.svg)](https://github.com/aryanbrite/aryan-prototype/actions/workflows/ci.yml)
 
-Send a bot into any Google Meet, Zoom, or Teams meeting to capture audio and process it with Gemini in real time.  
+Send your AI workspace assistant into any Google Meet, Zoom, or Teams meeting to capture audio and provide real-time assistance.  
 This API handles all WebSocket connections and AI processing – your frontend only needs to call one endpoint.
 
 ## Features
 
-- ✅ Join Google Meet, Zoom, and Microsoft Teams meetings
-- 🤖 AI-powered bot using Google Gemini for real-time interaction
-- 🔒 Secure implementation with input validation, sanitization, and rate limiting
-- 📦 Docker support for easy deployment
-- 🧪 Comprehensive test suite
-- 📖 Detailed API documentation
-- 🛡️ Security best practices implemented
-- 📚 OSS-friendly with contributing guidelines and code of conduct
+- Join Google Meet, Zoom, and Microsoft Teams meetings
+- AI-powered bot using Google Gemini for real-time interaction
+- Secure implementation with input validation, sanitization, and rate limiting
+- Docker support for easy deployment
+- Comprehensive test suite
+- Detailed API documentation
+- Security best practices implemented
+- OSS-friendly with contributing guidelines and code of conduct
 
 ## Table of Contents
 
@@ -115,11 +115,11 @@ By default, the backend runs on `http://localhost:8000`
 - `GET /health` - Detailed health check with uptime and memory usage
 - `GET /health/detailed` - Extended health check with dependency versions
 
-### Main Endpoint
+### Main Endpoints
 
 #### `POST /api/join`
 
-Sends a bot into a meeting.
+Sends your Cucumbu workspace assistant into a meeting.
 
 **Request Body:**
 ```json
@@ -143,8 +143,53 @@ Sends a bot into a meeting.
 }
 ```
 
+#### `GET /api/bot-status/:botId`
+
+Get the status of an active Cucumbu meeting bot.
+
+**Response:**
+```json
+{
+  "status": "success",
+  "bot": {
+    "bot_id": "unique-bot-identifier",
+    "meeting_url": "https://meet.google.com/abc-defg-hij",
+    "joined_at": "ISO timestamp",
+    "status": "active",
+    "duration": {
+      "hours": 1,
+      "minutes": 23,
+      "seconds": 45,
+      "totalSeconds": 5025
+    }
+  }
+}
+```
+
+#### `GET /api/bots`
+
+List all active bots (for admin/debugging).
+
+**Response:**
+```json
+{
+  "status": "success",
+  "count": 2,
+  "bots": [
+    {
+      "bot_id": "bot-1",
+      "meeting_url": "https://meet.google.com/abc-defg-hij",
+      "joined_at": "ISO timestamp",
+      "status": "active",
+      "duration": { /* ... */ }
+    }
+  ]
+}
+```
+
 **Error Responses:**
-- `400 Bad Request` - Invalid or missing meeting_url
+- `400 Bad Request` - Invalid or missing meeting_url or botId
+- `404 Not Found` - Bot not found or expired
 - `500 Internal Server Error` - Server misconfiguration or service failure
 
 ### Environment Variables
