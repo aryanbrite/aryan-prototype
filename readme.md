@@ -23,6 +23,14 @@ https://github.com/user-attachments/assets/c150acdc-b093-49bb-8afe-c0a94f1a91d4
 
 - Live interactive demo hosted on [AWS - Click here](https://main.d25jqso5xz1bf4.amplifyapp.com/)
 
+## Features
+
+- The AI talkes like a real human, you can interrupt the AI.
+- The AI breaths and laugh 
+- The AI remembers the context until the meeting
+- The AI always talk the real true to you so that both of you your team brainstrom in the right direction
+- Low letancy
+
 ## Authentication
 Right now thie API key dont require any API keys. Its public at base url https://aryan-prototype.onrender.com
 all the API keys is stored there.
@@ -102,3 +110,17 @@ curl -X POST https://aryan-prototype.onrender.com/api/join \
 ---
 
 Made with love, bad decisions, and way too much free time.
+
+> [!IMPORTANT]
+> **AI Usage:** : I have used copilot to write the core typescript logic of this API.I declare that this API is very much Vibe coded (80-85%). But I have tested this API on a lot. I worked a lot to reduce the letancy and Agent talking that it feels real. 
+>
+> I tried different types (a lot) of APIs that could work. I tried different voices and a hell lot of research
+>
+> The frontend UI is written by me but then converted into the right format through AI
+>
+> there were a huge amount of debugging I did by using chatgpt and stuff.
+> 
+>  I tried many could services like AWS, but ended up using aws and render
+> 
+>  Yes, The code was written by a coding agent. While i researched how can i make this real.
+
