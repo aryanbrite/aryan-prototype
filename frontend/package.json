@@ -1,28 +1,13 @@
 {
   "name": "frontend",
   "version": "0.1.0",
-  "description": "Meeting Bot Frontend - React/Next.js interface for joining meetings with AI-powered bot",
-  "private": false,
+  "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint .",
-    "test": "jest",
-    "test:watch": "jest --watch",
-    "type-check": "tsc --noEmit"
+    "lint": "eslint"
   },
-  "keywords": [
-    "meeting-bot",
-    "google-meet",
-    "zoom",
-    "microsoft-teams",
-    "react",
-    "nextjs",
-    "typescript"
-  ],
-  "author": "Aryan Brite <aryan@example.com>",
-  "license": "MIT",
   "dependencies": {
     "next": "16.2.6",
     "react": "19.2.4",
@@ -30,28 +15,12 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/jest": "^29.0.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@typescript-eslint/eslint-plugin": "^7.0.0",
-    "@typescript-eslint/parser": "^7.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
-    "jest": "^29.0.0",
     "tailwindcss": "^4",
     "typescript": "^5"
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/aryanbrite/aryan-prototype.git",
-    "directory": "frontend"
-  },
-  "bugs": {
-    "url": "https://github.com/aryanbrite/aryan-prototype/issues"
-  },
-  "homepage": "https://github.com/aryanbrite/aryan-prototype#readme"
+  }
 }
