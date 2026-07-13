@@ -4,17 +4,6 @@ export default function Privacy() {
   return (
     <main className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-4">
       <div className="w-full max-w-md rounded-xl bg-white p-8 shadow-md">
-        {/* Logo Section */}
-        <div className="text-center mb-6">
-          <div className="inline-flex items-center">
-            <span className="font-mono text-[32px] font-[900] text-black tracking-[-1px] leading-none">
-              .cucumbu
-            </span>
-          </div>
-          <p className="mt-1 text-xs text-gray-500">
-            © 2026 Cucumbu Inc. | Work with agents, your way
-          </p>
-        </div>
         <h1 className="mb-6 text-center text-2xl font-bold text-gray-800">
           Privacy Policy
         </h1>

@@ -79,17 +79,12 @@ export default function Home() {
   return (
     <main className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-4">
       <div className="w-full max-w-md rounded-xl bg-white p-8 shadow-md">
-        {/* Logo Section */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center">
-            <span className="font-mono text-[48px] font-[900] text-black tracking-[-1px] leading-none">
-              .cucumbu
-            </span>
-          </div>
-          <p className="mt-2 text-xs text-gray-500">
-            © 2026 Cucumbu Inc. | Work with agents, your way
-          </p>
-        </div>
+        <h1 className="mb-6 text-center text-2xl font-bold text-gray-800">
+          Cucumbu Meeting Bot
+        </h1>
+        <p className="mb-6 text-center text-gray-600">
+          Your AI-powered workspace assistant for meetings
+        </p>
 
         {!activeMeeting && !botId ? (
           <form onSubmit={handleJoin} className="space-y-6" role="form">
