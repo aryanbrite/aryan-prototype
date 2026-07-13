@@ -1,0 +1,26 @@
+main{
+    margin-left: 35vw;
+    margin-top: 30vh;
+}
+p{
+    user-select: none;
+}
+
+h1{
+    background-color: rgb(223, 255, 81);
+    display: inline-block;
+}
+
+#love{
+    position: fixed;
+    bottom: 0;
+    right: 1vw;
+}
+
+button{
+    user-select: none;
+}
+
+body {
+    user-select: none;
+}

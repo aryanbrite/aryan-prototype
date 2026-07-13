@@ -9,80 +9,105 @@ type StatusState = {
 
 export default function Home() {
   const [meetingUrl, setMeetingUrl] = useState("");
-  const [status, setStatus] = useState<StatusState>({ text: "", error: false });
+  const [status, setStatus] = useState<StatusState>({
+    text: "",
+    error: false,
+  });
   const [loading, setLoading] = useState(false);
 
   const handleJoin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
     setLoading(true);
-    setStatus({ text: "Requesting bot to join...", error: false });
+    setStatus({
+      text: "Requesting bot to join...",
+      error: false,
+    });
 
     try {
       const backendUrl =
-        process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+        process.env.NEXT_PUBLIC_BACKEND_URL ||
+        "http://localhost:8000";
+
       const response = await fetch(`${backendUrl}/api/join`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ meeting_url: meetingUrl }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          meeting_url: meetingUrl,
+        }),
       });
 
       const data = await response.json();
+
       if (data.status === "success") {
-        setStatus({ text: `Success! Bot ID: ${data.bot_id}`, error: false });
+        setStatus({
+          text: `Success! Bot ID: ${data.bot_id}`,
+          error: false,
+        });
       } else {
-        setStatus({ text: `Error: ${data.message}`, error: true });
+        setStatus({
+          text: `Error: ${data.message}`,
+          error: true,
+        });
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus({ text: `Connection Error: ${message}`, error: true });
+      const message =
+        error instanceof Error ? error.message : String(error);
+
+      setStatus({
+        text: `Connection Error: ${message}`,
+        error: true,
+      });
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-4">
-      <div className="w-full max-w-md rounded-xl bg-white p-8 shadow-md">
-        <h1 className="mb-6 text-center text-2xl font-bold text-gray-800">
-          Gemini Meeting Bot
-        </h1>
+    <>
+      <main>
+        <p>
+          ----------------------------------------------------------------
+        </p>
 
-        <form onSubmit={handleJoin} className="space-y-4">
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Meeting URL
-            </label>
-            <input
-              type="url"
-              required
-              placeholder="https://meet.google.com/xxx-yyy-zzz"
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-black focus:outline-none focus:ring-2 focus:ring-blue-500"
-              value={meetingUrl}
-              onChange={(event) => setMeetingUrl(event.target.value)}
-            />
-          </div>
+        <h1>.cucumbu</h1>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-md bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
-          >
+        <p>
+          This is an interactive demo of the cucumbu API :)
+        </p>
+
+        <form onSubmit={handleJoin}>
+          <input
+            type="url"
+            required
+            placeholder="https://meet.google.com/xxx-yyy-zzz"
+            value={meetingUrl}
+            onChange={(e) => setMeetingUrl(e.target.value)}
+          />
+
+          <button type="submit" disabled={loading}>
             {loading ? "Joining..." : "Join Meeting"}
           </button>
         </form>
 
         {status.text && (
-          <div
-            className={`mt-4 rounded-md p-3 text-sm ${
-              status.error
-                ? "bg-red-50 text-red-700"
-                : "bg-green-50 text-green-700"
-            }`}
+          <p
+            className={
+              status.error ? "status error" : "status success"
+            }
           >
             {status.text}
-          </div>
+          </p>
         )}
-      </div>
-    </main>
+
+        <p>
+          ----------------------------------------------------------------
+        </p>
+      </main>
+
+      <p id="love">made with love ❤️</p>
+    </>
   );
 }
