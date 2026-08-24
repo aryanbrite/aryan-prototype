@@ -112,7 +112,7 @@ curl -X POST https://aryan-prototype.vercel.app/api/join \
 Made with love, bad decisions, and way too much free time.
 
 > [!IMPORTANT]
-> **AI Usage:** : I have used copilot to write the core typescript logic of this API.I declare that this API is very much Vibe coded (80-85%). But I have tested this API on a lot. I worked a lot to reduce the letancy and Agent talking that it feels real. 
+> **AI Usage:** : I have used copilot to write the core typescript logic of this API.I declare that this API is very much Vibe coded (80-85%). But I have tested this API on a lot of different use cases. It took me a lot of time to make this api actually work I had to do a lot of research and assemble things up to finally make something like this. I worked a lot to reduce the letancy and Agent talking that it feels real. 
 >
 > I tried different types (a lot) of APIs that could work. I tried different voices and a hell lot of research
 >
