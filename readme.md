@@ -32,7 +32,7 @@ https://github.com/user-attachments/assets/c150acdc-b093-49bb-8afe-c0a94f1a91d4
 - Low letancy
 
 ## Authentication
-Right now thie API key dont require any API keys. Its public at base url https://aryan-prototype.onrender.com
+Right now thie API key dont require any API keys. Its public at base url https://aryan-prototype.vercel.app
 all the API keys is stored there.
 
 ## Endpoint
@@ -94,7 +94,7 @@ The `bot_id` can be used later to query the bot’s status (if such a route beco
 ## API usecase example
 to excess this from your command line 
 ```bash
-curl -X POST https://aryan-prototype.onrender.com/api/join \
+curl -X POST https://aryan-prototype.vercel.app/api/join \
   -H "Content-Type: application/json" \
   -d '{"meeting_url": "https://meet.google.com/abc-defg-hij"}'
 ```
