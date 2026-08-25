@@ -121,7 +121,7 @@ Made with love, bad decisions, and way too much free time.
 >
 > there were a huge amount of debugging I did by using chatgpt and stuff.
 > 
->  I tried many could services like AWS, but ended up using aws and render
+>  I tried many could services like AWS, but ended up using aws and vercel
 > 
 >  Yes, The code was written by a coding agent. While i researched how can i make this real.
 
