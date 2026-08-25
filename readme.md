@@ -100,6 +100,8 @@ curl -X POST https://aryan-prototype.vercel.app/api/join \
   -d '{"meeting_url": "https://meet.google.com/abc-defg-hij"}'
 ```
 
+# Running Locally
+
 1) Clone the repository:
 
 ```sh
